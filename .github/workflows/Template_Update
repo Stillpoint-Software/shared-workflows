@@ -1,0 +1,128 @@
+name: template-update
+
+on:
+  workflow_call:
+    inputs:
+      template_repo:
+        required: true
+        type: string
+
+jobs:
+  update-template:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 📥 Step 1: Checkout the project repo using the template
+      - name: Checkout project
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 🧾 Step 2: Verify .cookiecutter.json exists
+      - name: Verify .cookiecutter.json exists
+        run: |
+          if [ ! -f .cookiecutter.json ]; then
+            echo "❌ Missing .cookiecutter.json in project root."
+            exit 1
+          fi
+
+      # 🌿 Step 3: Determine whether to use develop or main as base
+      - name: Determine base branch (develop > main)
+        id: branch
+        run: |
+          if git ls-remote --heads origin develop | grep develop; then
+            echo "BASE_BRANCH=develop" >> $GITHUB_ENV
+          else
+            echo "BASE_BRANCH=main" >> $GITHUB_ENV
+          fi
+
+      # 🐍 Step 4: Set up Python and install Cookiecutter
+      - name: Set up Python & install Cookiecutter
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: pip install cookiecutter
+
+      # 🧱 Step 5: Set up .NET 9 SDK
+      - name: Set up .NET 9 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      # 📦 Step 6: Clone the template repo
+      - name: Clone cookiecutter template repo
+        run: git clone ${{ inputs.template_repo }} template-source
+
+      # 🧠 Step 7: Choose sub-template based on .cookiecutter.json and generate project
+      - name: Determine sub-template and generate project
+        id: generate
+        run: |
+          TEMPLATE_PATH=""
+
+          if grep -q '"include_aspire": *"yes"' .cookiecutter.json; then
+            TEMPLATE_PATH="aspire-project"
+          elif grep -q '"include_docker": *"yes"' .cookiecutter.json; then
+            TEMPLATE_PATH="docker-project"
+          else
+            echo "❌ No valid sub-template selected."
+            exit 1
+          fi
+
+          echo "Using sub-template: $TEMPLATE_PATH"
+          cookiecutter template-source/$TEMPLATE_PATH --no-input --config-file .cookiecutter.json --output-dir regenerated
+          mv regenerated/* generated-project
+
+      # 🆚 Step 8: Compare the generated project with the current project
+      - name: Compare generated project with current repo
+        id: check_diff
+        run: |
+          diff_output=$(diff -qr generated-project . --exclude=.git --exclude=generated-project || true)
+          echo "$diff_output"
+          echo "DIFF_FOUND=$(test -n "$diff_output" && echo true || echo false)" >> $GITHUB_ENV
+
+      # ❌ Step 9: Skip if no changes
+      - name: Stop if no changes detected
+        if: env.DIFF_FOUND == 'false'
+        run: exit 0
+
+      # 🌿 Step 10: Create update branch and commit changes
+      - name: Create and push update branch
+        run: |
+          BRANCH="template-update-$(date +%s)"
+          echo "UPDATE_BRANCH=$BRANCH" >> $GITHUB_ENV
+          git checkout -b $BRANCH
+          rsync -av --delete generated-project/ . --exclude='.git' --exclude='generated-project'
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add .
+          git commit -m "chore: update from cookiecutter template"
+          git push origin $BRANCH
+
+      # 🧪 Step 11: Run .NET 9 Tests
+      - name: Run tests
+        continue-on-error: true
+        run: |
+          mkdir -p test-results
+          dotnet restore
+          dotnet test --configuration Release --no-build --logger "trx;LogFileName=test-results/test-results.trx"
+
+      # 📤 Step 12: Upload test results if tests failed
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results
+
+      # 🛠️ Step 13: Create pull request
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          title: "Update from Cookiecutter Template"
+          body: |
+            This PR includes updates from the template: `${{ inputs.template_repo }}`.
+
+            ⚠️ If tests failed, review test-results artifact.
+          head: ${{ env.UPDATE_BRANCH }}
+          base: ${{ env.BASE_BRANCH }}
