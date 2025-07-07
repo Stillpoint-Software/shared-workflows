@@ -1,4 +1,4 @@
-name: template-update
+name: template_update
 
 on:
   workflow_call:
