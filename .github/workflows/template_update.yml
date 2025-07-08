@@ -128,7 +128,7 @@ jobs:
 
       # 📤 12. Upload test results artifact (always)
       - name: Upload test results
-        if: always()
+        if: ${{ always() && hashFiles('test-results/*.trx') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: test-results
