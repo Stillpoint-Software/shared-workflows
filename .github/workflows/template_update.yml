@@ -48,7 +48,7 @@ jobs:
       - name: Set up .NET 9 SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "9.0.x"
+          dotnet-version: '9.0.x'
 
       # 📦 6. Clone the template repo
       - name: Clone cookiecutter template repo
@@ -74,8 +74,8 @@ jobs:
           # Tell hooks they’re in CI / non-interactive mode
           export COOKIECUTTER_NO_INPUT=1
 
+          # Replay answers (can't combine with --no-input)
           cookiecutter "template-source/$TEMPLATE_PATH" \
-            --no-input \
             --replay-file .cookiecutter.json \
             --output-dir regenerated
 
@@ -116,7 +116,7 @@ jobs:
 
       # 🧪 11. Run tests & collect results
       - name: Run tests
-        continue-on-error: true   # fail tests but keep workflow alive
+        continue-on-error: true           # keep workflow alive on test failure
         run: |
           mkdir -p test-results
           dotnet restore
@@ -126,7 +126,7 @@ jobs:
             --logger "trx;LogFileName=test-results.trx" \
             --results-directory "$(pwd)/test-results"
 
-      # 📤 12. Upload test results artifact (always)
+      # 📤 12. Upload test results artifact (only if .trx exists)
       - name: Upload test results
         if: ${{ always() && hashFiles('test-results/*.trx') != '' }}
         uses: actions/upload-artifact@v4
@@ -143,9 +143,9 @@ jobs:
           body: |
             This PR includes updates generated from the template:
 
-            • Source: `${{ inputs.template_repo }}`
-            • Base branch: `${{ env.BASE_BRANCH }}`  
-            • CI results: see **test-results** artifact (uploaded above)
+            • Source : `${{ inputs.template_repo }}`
+            • Base   : `${{ env.BASE_BRANCH }}`  
+            • CI     : test results attached as **test-results** artifact
 
             _Review carefully and merge when ready._
           head: ${{ env.UPDATE_BRANCH }}
