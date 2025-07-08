@@ -58,18 +58,26 @@ jobs:
         id: generate
         run: |
           TEMPLATE_PATH=""
-
           if grep -q '"include_aspire": *"yes"' .cookiecutter.json; then
             TEMPLATE_PATH="aspire-project"
           elif grep -q '"include_docker": *"yes"' .cookiecutter.json; then
             TEMPLATE_PATH="docker-project"
           else
-            echo "❌ No valid sub-template selected."
-            exit 1
+            echo "❌ No valid sub-template selected."; exit 1
           fi
-
+      
           echo "Using sub-template: $TEMPLATE_PATH"
-          cookiecutter template-source/$TEMPLATE_PATH --no-input --config-file .cookiecutter.json --output-dir regenerated
+      
+          # Tell hooks we're non-interactive
+          export COOKIECUTTER_NO_INPUT=1
+      
+          # Replay answers from the project’s .cookiecutter.json
+          cookiecutter "template-source/$TEMPLATE_PATH" \
+              --no-input \
+              --replay-file .cookiecutter.json \
+              --output-dir regenerated
+      
+          mkdir -p generated-project
           mv regenerated/* generated-project
 
       # 🆚 Step 8: Compare the generated project with the current project
