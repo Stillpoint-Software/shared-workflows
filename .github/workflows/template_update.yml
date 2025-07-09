@@ -148,5 +148,5 @@ jobs:
             • CI     : test results attached as **test-results** artifact
 
             _Review carefully and merge when ready._
-          head: ${{ env.UPDATE_BRANCH }}
+          branch: ${{ env.UPDATE_BRANCH }}
           base: ${{ env.BASE_BRANCH }}
