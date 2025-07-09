@@ -99,15 +99,23 @@ jobs:
         if: env.DIFF_FOUND == 'false'
         run: exit 0
 
-      # 🌿 10. Commit regenerated code on a new branch
+      # 10. Commit regenerated code on a new branch
       - name: Create and push update branch
         run: |
+          # ── clean up helper folders so the tree is truly clean ──────────────
+          rm -rf template-source generated-project
+      
           BRANCH="template-update-$(date +%s)"
           echo "UPDATE_BRANCH=$BRANCH" >> "$GITHUB_ENV"
-
+      
           git checkout -b "$BRANCH"
-          rsync -av --delete generated-project/ . \
-            --exclude='.git' --exclude='generated-project'
+      
+          # Copy regenerated files, but skip helper dirs just in case
+          rsync -av --delete regenerated-project/ . \
+            --exclude='.git' \
+            --exclude='template-source' \
+            --exclude='generated-project'
+      
           git config user.name github-actions
           git config user.email github-actions@github.com
           git add -A
