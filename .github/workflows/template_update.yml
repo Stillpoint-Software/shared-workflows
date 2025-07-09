@@ -102,25 +102,37 @@ jobs:
       # 10. Commit regenerated code on a new branch
       - name: Create and push update branch
         run: |
-          # ── clean up helper folders so the tree is truly clean ──────────────
-          rm -rf template-source generated-project
+          # ── remove the nested Git repo so the tree is clean ────────────────
+          rm -rf template-source
       
           BRANCH="template-update-$(date +%s)"
           echo "UPDATE_BRANCH=$BRANCH" >> "$GITHUB_ENV"
-      
           git checkout -b "$BRANCH"
       
-          # Copy regenerated files, but skip helper dirs just in case
-          rsync -av --delete regenerated-project/ . \
-            --exclude='.git' \
-            --exclude='template-source' \
-            --exclude='generated-project'
+          # ── copy regenerated project into the repo ─────────────────────────
+          if [ -d generated-project ]; then
+            rsync -av --delete generated-project/ . \
+              --exclude='.git' \
+              --exclude='template-source' \
+              --exclude='generated-project'
+          fi
+      
+          # ── now we can drop the staging folder ─────────────────────────────
+          rm -rf generated-project
       
           git config user.name github-actions
           git config user.email github-actions@github.com
           git add -A
-          git commit -m "chore: update from cookiecutter template"
-          git push origin "$BRANCH"
+      
+          # Commit only when there really are staged changes
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update from cookiecutter template"
+            git push origin "$BRANCH"
+          else
+            echo "ℹ️  No changes after rsync – skipping branch push."
+            git checkout -
+            git branch -D "$BRANCH"
+          fi
 
       # 🧪 11. Run tests & collect results
       - name: Run tests
