@@ -1,25 +1,57 @@
 name: template_update
 
 on:
-  # Reusable workflow trigger
   workflow_call:
     inputs:
       template_repo:
+        description: 'URL of the cookiecutter template repo'
+        required: true
+        type: string
+      repo_branch:
+        description: 'Branch of the project repo to update'
         required: true
         type: string
 
 jobs:
-  update-template:
+  validate-inputs:
     runs-on: ubuntu-latest
-
+    outputs:
+      repo:   ${{ inputs.template_repo }}
+      branch: ${{ inputs.repo_branch }}
     steps:
-      # 📥 1. Checkout the project that *uses* the template
-      - name: Checkout project repo
+      - name: Verify template repo is reachable
+        run: |
+          git ls-remote "${{ inputs.template_repo }}" HEAD \
+            || (echo "::error ::Cannot reach template repo '${{ inputs.template_repo }}'" && exit 1)
+
+      - name: Checkout caller repo for branch validation
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 🧾 2. Ensure .cookiecutter.json exists (answers file)
+      - name: Fetch all remote branches
+        run: |
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*'
+
+      - name: Validate repo_branch exists
+        run: |
+          if ! git show-ref --verify --quiet "refs/remotes/origin/${{ inputs.repo_branch }}"; then
+            echo "::error ::Branch '${{ inputs.repo_branch }}' not found on origin!"
+            exit 1
+          fi
+
+  update-template:
+    needs: validate-inputs
+    runs-on: ubuntu-latest
+    steps:
+      # 📥 Checkout project repo at provided branch
+      - name: Checkout project repo at provided branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.validate-inputs.outputs.branch }}
+
+      # 🧾 Ensure .cookiecutter.json exists
       - name: Verify .cookiecutter.json exists
         run: |
           if [ ! -f .cookiecutter.json ]; then
@@ -27,62 +59,67 @@ jobs:
             exit 1
           fi
 
-      # 🌿 3. Pick develop > main as PR base
-      - name: Determine base branch (develop > main)
-        id: branch
-        run: |
-          if git ls-remote --heads origin develop | grep develop; then
-            echo "BASE_BRANCH=develop" >> "$GITHUB_ENV"
-          else
-            echo "BASE_BRANCH=main" >> "$GITHUB_ENV"
-          fi
+      # 📦 Clone the template repo
+      - name: Clone cookiecutter template repo
+        run: git clone "${{ needs.validate-inputs.outputs.repo }}" template-source
 
-      # 🐍 4. Install Python & Cookiecutter
+      # 🔍 Check if template has changed since last run
+      - name: Get latest template SHA
+        id: template_sha
+        run: |
+          cd template-source
+          git rev-parse HEAD > ../new_template_sha
+          cd ..
+      - name: Compare with previous template SHA
+        run: |
+          if [ -f .template_version ]; then
+            old_sha=$(cat .template_version)
+          else
+            old_sha=""
+          fi
+          new_sha=$(cat new_template_sha)
+          if [ "$old_sha" = "$new_sha" ]; then
+            echo "ℹ️ Template has not changed since last run. No update needed."
+            exit 0
+          fi
+          echo "$new_sha" > .template_version
+          rm new_template_sha
+
+      # 🐍 Install Python & Cookiecutter
       - name: Set up Python & install Cookiecutter
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
       - run: pip install cookiecutter
 
-      # 🧱 5. Install .NET 9 SDK (for test run)
+      # 🧱 Install .NET 9 SDK
       - name: Set up .NET 9 SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '9.0.x'
 
-      # 📦 6. Clone the template repo
-      - name: Clone cookiecutter template repo
-        run: git clone "${{ inputs.template_repo }}" template-source
-
-      # 🧠 7. Pick sub-template & regenerate project
+      # 🧠 Generate project from sub-template
       - name: Determine sub-template and generate project
         id: generate
         run: |
           TEMPLATE_PATH=""
-
-          if grep -q '"include_aspire": *"yes"' .cookiecutter.json; then
+          if grep -q '"is_aspire": *"yes"' .cookiecutter.json; then
             TEMPLATE_PATH="aspire-project"
-          elif grep -q '"include_docker": *"yes"' .cookiecutter.json; then
+          elif grep -q '"is_docker": *"yes"' .cookiecutter.json; then
             TEMPLATE_PATH="docker-project"
           else
             echo "❌ No valid sub-template selected."
             exit 1
           fi
-
           echo "Using sub-template: $TEMPLATE_PATH"
-
-          # Tell hooks they’re in CI / non-interactive mode
           export COOKIECUTTER_NO_INPUT=1
-
-          # Replay answers (can't combine with --no-input)
           cookiecutter "template-source/$TEMPLATE_PATH" \
             --replay-file .cookiecutter.json \
             --output-dir regenerated
-
           mkdir -p generated-project
           mv regenerated/* generated-project
 
-      # 🆚 8. Diff regenerated vs. current repo
+      # 🔎 Diff regenerated vs. current repo
       - name: Compare generated project with current repo
         id: check_diff
         run: |
@@ -94,37 +131,29 @@ jobs:
           echo "$diff_output"
           echo "DIFF_FOUND=$(test -n "$diff_output" && echo true || echo false)" >> "$GITHUB_ENV"
 
-      # ❌ 9. Bail early if nothing changed
+      # 🚫 Exit if no changes detected
       - name: Stop if no changes detected
         if: env.DIFF_FOUND == 'false'
         run: exit 0
 
-      # 10. Commit regenerated code on a new branch
+      # ✨ Commit regenerated code on a new branch
       - name: Create and push update branch
         run: |
-          # ── remove the nested Git repo so the tree is clean ────────────────
           rm -rf template-source
-      
           BRANCH="template-update-$(date +%s)"
           echo "UPDATE_BRANCH=$BRANCH" >> "$GITHUB_ENV"
           git checkout -b "$BRANCH"
-      
-          # ── copy regenerated project into the repo ─────────────────────────
           if [ -d generated-project ]; then
             rsync -av --delete generated-project/ . \
               --exclude='.git' \
               --exclude='template-source' \
               --exclude='generated-project'
           fi
-      
-          # ── now we can drop the staging folder ─────────────────────────────
           rm -rf generated-project
-      
           git config user.name github-actions
           git config user.email github-actions@github.com
+          git add .template_version
           git add -A
-      
-          # Commit only when there really are staged changes
           if ! git diff --cached --quiet; then
             git commit -m "chore: update from cookiecutter template"
             git push origin "$BRANCH"
@@ -134,27 +163,7 @@ jobs:
             git branch -D "$BRANCH"
           fi
 
-      # 🧪 11. Run tests & collect results
-      - name: Run tests
-        continue-on-error: true           # keep workflow alive on test failure
-        run: |
-          mkdir -p test-results
-          dotnet restore
-          dotnet test \
-            --configuration Release \
-            --no-build \
-            --logger "trx;LogFileName=test-results.trx" \
-            --results-directory "$(pwd)/test-results"
-
-      # 📤 12. Upload test results artifact (only if .trx exists)
-      - name: Upload test results
-        if: ${{ always() && hashFiles('test-results/*.trx') != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: test-results/*.trx
-
-      # 🛠️ 13. Open pull request
+      # 🛠️ Create Pull Request
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v5
         with:
@@ -162,11 +171,7 @@ jobs:
           title: "Update from Cookiecutter Template"
           body: |
             This PR includes updates generated from the template:
-
-            • Source : `${{ inputs.template_repo }}`
-            • Base   : `${{ env.BASE_BRANCH }}`  
-            • CI     : test results attached as **test-results** artifact
-
-            _Review carefully and merge when ready._
+            • Source  : `${{ needs.validate-inputs.outputs.repo }}`
+            • Branch  : `${{ needs.validate-inputs.outputs.branch }}`
           branch: ${{ env.UPDATE_BRANCH }}
-          base: ${{ env.BASE_BRANCH }}
+          base: ${{ needs.validate-inputs.outputs.branch }}
