@@ -1,0 +1,92 @@
+name: nbgv_dotnet_pack
+
+###############################################################################
+# Builds, packs, and (optionally) pushes NuGet packages with deterministic
+# Nerdbank.GitVersioning versions.  Supports Release / Develop configs and a
+# flag to force “-dev” prerelease tags even on main.
+#
+# Called from consumer repos via:
+#   uses: Stillpoint-Software/shared-workflows/.github/workflows/nbgv_dotnet_pack.yml@main
+###############################################################################
+
+on:
+  workflow_call:
+    inputs:
+      build_configuration:
+        description: "MSBuild configuration (Release, Develop, Debug …)"
+        required: false
+        type: string
+        default: "Release"
+
+      dotnet_version:
+        description: ".NET SDK channel"
+        required: false
+        type: string
+        default: "9.0.x"
+
+      push_after_pack:
+        description: "Push the .nupkg to nuget_source?"
+        required: false
+        type: boolean
+        default: false
+
+      nuget_source:
+        description: "Feed URL"
+        required: false
+        type: string
+        default: "https://api.nuget.org/v3/index.json"
+
+      force_dev_prerelease:
+        description: "Force -dev prerelease tag even on main/release branches"
+        required: false
+        type: boolean
+        default: false
+
+    secrets:
+      NUGET_API_KEY:
+        description: "API key for nuget_source (needed if push_after_pack=true)"
+        required: false
+
+jobs:
+  build-pack:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️  Checkout
+        uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: 🛠️  Setup .NET
+        uses: actions/setup-dotnet@v4
+        with: 
+          dotnet-version: ${{ inputs.dotnet_version }} 
+
+      - name: 🔧 Restore local tools
+        run: dotnet tool restore
+
+      - name: 📜 Compute version (NBGV)
+        run: dotnet nbgv cloud -v q
+
+      - name: 🏗️  Build
+        run: |
+          EXTRA=""
+          if [ "${{ inputs.force_dev_prerelease }}" = "true" ]; then
+            EXTRA="-p:NBGV_PublicRelease=false"
+          fi
+          dotnet build -c ${{ inputs.build_configuration }} $EXTRA
+
+      - name: 📦 Pack
+        run: |
+          EXTRA=""
+          if [ "${{ inputs.force_dev_prerelease }}" = "true" ]; then
+            EXTRA="-p:NBGV_PublicRelease=false"
+          fi
+          dotnet pack -c ${{ inputs.build_configuration }} -o output $EXTRA
+
+      - name: 🚀 Push to NuGet
+        if: inputs.push_after_pack == true
+        run: |
+          dotnet nuget push "output/*.nupkg" \
+            --source "${{ inputs.nuget_source }}" \
+            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --skip-duplicate
