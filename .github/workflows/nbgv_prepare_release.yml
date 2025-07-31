@@ -1,44 +1,42 @@
 name: nbgv_prepare_release
-
-###############################################################################
-# Creates a release branch, bumps version.json, pushes tags/branches, and
-# opens a draft PR   release/*  ➜  main.
-#
-# Called from consumer repos via:
-#   uses: Stillpoint-Software/shared-workflows/.github/workflows/nbgv_prepare_release.yml@main
-###############################################################################
-
 on:
   workflow_call:
     inputs:
-      increment:                    # REQUIRED: major | minor | patch
-        description: "Version part to bump"
-        required: true
+      target_branch:
+        description: "Branch or tag to release from"
+        required: false
         type: string
+        default: main
+
+      increment:
+        description: "Version bump (major, minor, patch)"
+        required: false
+        type: string
+        default: patch
 
     secrets:
-      GH_TOKEN:                     # Optional PAT if default token lacks perms
-        description: "Token for pushing branches & creating PR"
+      GH_TOKEN:
+        description: "PAT if you need extra scopes; default token works in most orgs"
         required: false
 
 jobs:
   prepare-release:
     runs-on: ubuntu-latest
-
     env:
       DOTNET_NOLOGO: true
       GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
 
     steps:
-      # 1️⃣  Checkout full history (commit-height matters)
+      # 1️⃣ checkout chosen ref with full history
       - name: ⬇️  Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.target_branch }}
           fetch-depth: 0
           token: ${{ env.GH_TOKEN }}
 
-      # 2️⃣  .NET SDK & local tools (nbgv)
-      - name: 🛠️  Setup .NET
+      # 2️⃣ .NET 9 SDK + nbgv CLI
+      - name: 🛠️  Setup .NET 9
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
@@ -46,8 +44,8 @@ jobs:
       - name: 🔧 Restore local tools
         run: dotnet tool restore
 
-      # 3️⃣  Run nbgv prepare-release
-      - name: 🗂️  Prepare release branch
+      # 3️⃣ bump version & create release branch
+      - name: 🗂️  Prepare release
         id: prep
         run: |
           git config user.name  "release-bot"
@@ -55,20 +53,20 @@ jobs:
 
           dotnet nbgv prepare-release --versionIncrement ${{ inputs.increment }}
 
-          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
+          echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >>"$GITHUB_OUTPUT"
 
-      # 4️⃣  Push main, release branch, and tags
+      # 4️⃣ push both branches + tags
       - name: 🚀 Push branches & tags
         run: |
-          git push --follow-tags origin HEAD
-          git push --follow-tags origin ${{ steps.prep.outputs.branch }}
+          git push --follow-tags origin ${{ inputs.target_branch }}
+          git push --follow-tags origin ${{ steps.prep.outputs.release_branch }}
 
-      # 5️⃣  Draft PR: release/* → main
+      # 5️⃣ draft PR  release/* -> target_branch
       - name: 💬 Open pull request
         run: |
           gh pr create \
-            --base main \
-            --head ${{ steps.prep.outputs.branch }} \
-            --title "📦 Release ${{ steps.prep.outputs.branch }}" \
-            --body  "Auto-generated release PR for **${{ steps.prep.outputs.branch }}**." \
+            --base ${{ inputs.target_branch }} \
+            --head ${{ steps.prep.outputs.release_branch }} \
+            --title "📦 Release ${{ steps.prep.outputs.release_branch }}" \
+            --body  "Auto-generated release PR for **${{ steps.prep.outputs.release_branch }}**." \
             --draft
