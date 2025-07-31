@@ -1,0 +1,74 @@
+name: nbgv_prepare_release
+
+###############################################################################
+# Creates a release branch, bumps version.json, pushes tags/branches, and
+# opens a draft PR   release/*  ➜  main.
+#
+# Called from consumer repos via:
+#   uses: Stillpoint-Software/shared-workflows/.github/workflows/nbgv_prepare_release.yml@main
+###############################################################################
+
+on:
+  workflow_call:
+    inputs:
+      increment:                    # REQUIRED: major | minor | patch
+        description: "Version part to bump"
+        required: true
+        type: string
+
+    secrets:
+      GH_TOKEN:                     # Optional PAT if default token lacks perms
+        description: "Token for pushing branches & creating PR"
+        required: false
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+
+    env:
+      DOTNET_NOLOGO: true
+      GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+
+    steps:
+      # 1️⃣  Checkout full history (commit-height matters)
+      - name: ⬇️  Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ env.GH_TOKEN }}
+
+      # 2️⃣  .NET SDK & local tools (nbgv)
+      - name: 🛠️  Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: 🔧 Restore local tools
+        run: dotnet tool restore
+
+      # 3️⃣  Run nbgv prepare-release
+      - name: 🗂️  Prepare release branch
+        id: prep
+        run: |
+          git config user.name  "release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+
+          dotnet nbgv prepare-release --versionIncrement ${{ inputs.increment }}
+
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
+
+      # 4️⃣  Push main, release branch, and tags
+      - name: 🚀 Push branches & tags
+        run: |
+          git push --follow-tags origin HEAD
+          git push --follow-tags origin ${{ steps.prep.outputs.branch }}
+
+      # 5️⃣  Draft PR: release/* → main
+      - name: 💬 Open pull request
+        run: |
+          gh pr create \
+            --base main \
+            --head ${{ steps.prep.outputs.branch }} \
+            --title "📦 Release ${{ steps.prep.outputs.branch }}" \
+            --body  "Auto-generated release PR for **${{ steps.prep.outputs.branch }}**." \
+            --draft
