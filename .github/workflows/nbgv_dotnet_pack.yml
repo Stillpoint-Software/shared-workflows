@@ -1,14 +1,4 @@
 name: nbgv_dotnet_pack
-
-###############################################################################
-# Builds, packs, and (optionally) pushes NuGet packages with deterministic
-# Nerdbank.GitVersioning versions.  Supports Release / Develop configs and a
-# flag to force “-dev” prerelease tags even on main.
-#
-# Called from consumer repos via:
-#   uses: Stillpoint-Software/shared-workflows/.github/workflows/nbgv_dotnet_pack.yml@main
-###############################################################################
-
 on:
   workflow_call:
     inputs:
