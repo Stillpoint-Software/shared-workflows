@@ -46,6 +46,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: 9.0.x }
       - run: dotnet tool restore
+    
+      # 🔎 ADD THIS TEMPORARY DEBUG STEP
+      - name: 🐛 Debug list working dir
+        run: |
+          echo "PWD=$(pwd)"
+          echo "--- ls -a ---"
+          ls -a
 
       # 3️⃣  Run nbgv prepare-release (omit flag for patch)
       - name: 🗂️  Prepare release
@@ -61,7 +68,6 @@ jobs:
             # patch (revision) – CLI bumps revision automatically when flag omitted
             dotnet nbgv prepare-release
           fi
-
           echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
 
       # 4️⃣  Push branches & tags; open draft PR back to target_branch
