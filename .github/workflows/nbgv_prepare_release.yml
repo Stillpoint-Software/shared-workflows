@@ -32,6 +32,15 @@ jobs:
           dotnet-version: 9.0.x
       - run: dotnet tool restore
 
+      - name: 📂 Debug show where version.json is
+        run: |
+          echo "GITHUB_WORKSPACE = $GITHUB_WORKSPACE"
+          # List everything one level up and at workspace
+          echo "Parent dir contents:"
+          ls -l "$(dirname "$GITHUB_WORKSPACE")"
+          echo "Workspace contents:"
+          ls -l "$GITHUB_WORKSPACE"
+
       - name: 🗂️ Prepare release
         id: prepare
         run: |
