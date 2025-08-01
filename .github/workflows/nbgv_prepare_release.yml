@@ -1,63 +1,53 @@
-name: nbgv_prepare_release
+name: "NBGV: Prepare Release"
 
 on:
   workflow_call:
     inputs:
       target_branch:
         type: string
-        description: "Branch / tag to release from"
         default: main
-        required: true
-		
       increment:
-        description: "Which version component to bump: major, minor, or patch" # (patch means 'revision')
-        required: true
         type: string
-
+        default: patch
     secrets:
-      # The caller repo’s GITHUB_TOKEN is passed automatically; override if desired
       GH_TOKEN:
-        description: "Personal-access token if you need extra perms"
         required: false
 
 jobs:
-  prepare-release:
+  prep:
     runs-on: ubuntu-latest
     env:
-      DOTNET_NOLOGO: true
-
+      GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
     steps:
-      - name: ⬇️  Checkout full history
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch }}
-          fetch-depth: 0                # required for commit-height math
-          token: ${{ secrets.GH_TOKEN || github.token }}
+          fetch-depth: 0
+          token: ${{ env.GH_TOKEN }}
 
-      - name: 🛠️  Setup .NET SDK
+      - name: Setup .NET & NBGV
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
+      - run: dotnet tool restore
 
-      - name: 🔧 Restore local tools
-        run: dotnet tool restore
-
-      - name: 🗂️  Prepare release branch
-        id: prep
+      - name: 🗂️ Prepare release
+        id: prepare
         run: |
-          # Configure a generic bot identity for the commit
           git config user.name  "release-bot"
           git config user.email "release-bot@users.noreply.github.com"
 
-          # ---- create release branch & bump versions ----
-          dotnet nbgv prepare-release --versionIncrement ${{ inputs.increment }}
+          INC=${{ inputs.increment }}
+          case "$INC" in
+            major) FLAGS="--versionIncrement major" ;;
+            minor) FLAGS="--versionIncrement minor" ;;
+            patch) FLAGS="" ;;
+            *) echo "Invalid increment: $INC" && exit 1 ;;
+          esac
 
-          # Grab the branch name NBGV just created, e.g. release/v1.2
-          BRANCH=$(git rev-parse --abbrev-ref HEAD)
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          dotnet nbgv prepare-release --project . $FLAGS
+          echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: 🚀 Push changes (main + new release branch + tags)
-        run: |
-          # Prepare-release already committed on both branches and tagged the point release.
-          git push --follow-tags origin "${{ inputs.target_branch }}"
-          git push --follow-tags origin "${{ steps.prepare.outputs.release_branch }}"
+    outputs:
+      release_branch: ${{ steps.prepare.outputs.release_branch }}
