@@ -37,12 +37,9 @@ jobs:
         with:
           dotnet-version: "9.0.x"
 
-      - name: 🔧 Restore NBGV tool
-        run: dotnet tool restore
-
       - name: 🛠️ Bump version & create branch
         id: nbgv
-        uses: dotnet/nbgv@main
+        uses: dotnet/nbgv@master 
         with:
           version-increment: ${{ inputs.increment }}   # major | minor | patch
           version-file: version.json                   # explicitly point at your file
