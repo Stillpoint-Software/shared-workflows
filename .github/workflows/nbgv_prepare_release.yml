@@ -50,7 +50,8 @@ jobs:
 
       - name: 🔍 Show loaded version
         run: |
-           dotnet nbgv show-version --output json
+           dotnet tool restore
+           dotnet nbgv get-version HEAD --format json
 
       # 2️⃣  .NET SDK + nbgv CLI
       - uses: actions/setup-dotnet@v4
