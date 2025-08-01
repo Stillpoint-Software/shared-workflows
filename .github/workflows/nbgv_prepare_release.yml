@@ -72,6 +72,6 @@ jobs:
           gh pr create \
             --base "${{ inputs.target_branch }}" \
             --head "${{ steps.prepare.outputs.release_branch }}" \
-            --title "📦 Release ${steps.prepare.outputs.release_branch}" \
+            --title "📦 Release ${{ steps.prepare.outputs.release_branch }}" \
             --body  "Auto-generated release PR." \
             --draft
