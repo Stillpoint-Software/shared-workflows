@@ -43,6 +43,11 @@ jobs:
       - name: 🗂️ Prepare release
         id: prepare
         run: |
+          # Make sure we're in the repo root where version.json lives
+          cd "$GITHUB_WORKSPACE"
+          echo "Running in: $(pwd)"
+          ls -l .
+
           git config user.name  "release-bot"
           git config user.email "release-bot@users.noreply.github.com"
 
@@ -54,10 +59,8 @@ jobs:
             *) echo "Invalid increment: $INC" && exit 1 ;;
           esac
 
-          # Force the lookup root to the repo root (where version.json is)
-          dotnet nbgv prepare-release --project "$GITHUB_WORKSPACE" $FLAGS
+          # Use the short -p flag pointing at the current directory
+          dotnet nbgv prepare-release -p "$GITHUB_WORKSPACE" $FLAGS
 
           echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
 
-    outputs:
-      release_branch: ${{ steps.prepare.outputs.release_branch }}
