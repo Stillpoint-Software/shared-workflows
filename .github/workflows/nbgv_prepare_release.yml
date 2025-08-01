@@ -54,6 +54,10 @@ jobs:
           echo "--- ls -a ---"
           ls -a
 
+      - name: 🐛 dump version file with hexdump
+        run: |
+          hexdump -C version.json | head -20
+
       # 3️⃣  Run nbgv prepare-release (omit flag for patch)
       - name: 🗂️  Prepare release
         id: prepare
