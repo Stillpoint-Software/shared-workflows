@@ -8,88 +8,56 @@ on:
         description: "Branch / tag to release from"
         default: main
         required: true
-
-      increment:                    # major | minor | patch  (patch means 'revision')
-        type: string
-        description: "Version increment"
-        default: patch
+		
+      increment:
+        description: "Which version component to bump: major, minor, or patch" # (patch means 'revision')
         required: true
-
-    outputs:
-      release_branch:
-        description: "New release branch name"
-        value: ${{ jobs.prep.outputs.release_branch }}
+        type: string
 
     secrets:
+      # The caller repo’s GITHUB_TOKEN is passed automatically; override if desired
       GH_TOKEN:
-        required: false      
+        description: "Personal-access token if you need extra perms"
+        required: false
 
 jobs:
-  prep:
+  prepare-release:
     runs-on: ubuntu-latest
     env:
       DOTNET_NOLOGO: true
-      GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
-
-    outputs:
-      release_branch: ${{ steps.prepare.outputs.release_branch }}
 
     steps:
-      # 1️⃣  Checkout caller-specified ref (caller already validated it exists)
-      - uses: actions/checkout@v4
+      - name: ⬇️  Checkout full history
+        uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch }}
-          fetch-depth: 0
-          token: ${{ env.GH_TOKEN }}
+          fetch-depth: 0                # required for commit-height math
+          token: ${{ secrets.GH_TOKEN || github.token }}
 
-      - name: 🔧 List local tools & NBGV version
-        run: |
-           dotnet tool restore
-           dotnet tool list --local
-           dotnet nbgv --version
+      - name: 🛠️  Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
 
-      - name: 🔍 Show loaded version
-        run: |
-           dotnet tool restore
-           dotnet nbgv get-version HEAD --format json
+      - name: 🔧 Restore local tools
+        run: dotnet tool restore
 
-      # 2️⃣  .NET SDK + nbgv CLI
-      - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: 9.0.x }
-      - run: dotnet tool restore
-      
-    
-      # 3️⃣  Run nbgv prepare-release (omit flag for patch)
-      - name: 🗂️ Prepare release with explicit file & diagnostics
-        id: prepare
+      - name: 🗂️  Prepare release branch
+        id: prep
         run: |
-         # compute the parent folder of $GITHUB_WORKSPACE
-          PARENT_DIR="${GITHUB_WORKSPACE%/*}"
-      
+          # Configure a generic bot identity for the commit
           git config user.name  "release-bot"
           git config user.email "release-bot@users.noreply.github.com"
-      
-          INC=${{ inputs.increment }}
-          case "$INC" in
-            major) FLAGS="--versionIncrement major" ;;
-            minor) FLAGS="--versionIncrement minor" ;;
-            patch) FLAGS="" ;;  # omit flag for 'patch'
-            *) echo "Invalid increment: $INC" && exit 1 ;;
-          esac
-      
-          # point at the directory that actually contains version.json
-          dotnet nbgv prepare-release --project "$PARENT_DIR" $FLAGS
-          echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
-          
-      # 4️⃣  Push branches & tags; open draft PR back to target_branch
-      - run: |
+
+          # ---- create release branch & bump versions ----
+          dotnet nbgv prepare-release --versionIncrement ${{ inputs.increment }}
+
+          # Grab the branch name NBGV just created, e.g. release/v1.2
+          BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: 🚀 Push changes (main + new release branch + tags)
+        run: |
+          # Prepare-release already committed on both branches and tagged the point release.
           git push --follow-tags origin "${{ inputs.target_branch }}"
           git push --follow-tags origin "${{ steps.prepare.outputs.release_branch }}"
-
-      - run: |
-          gh pr create \
-            --base "${{ inputs.target_branch }}" \
-            --head "${{ steps.prepare.outputs.release_branch }}" \
-            --title "📦 Release ${{ steps.prepare.outputs.release_branch }}" \
-            --body  "Auto-generated release PR." \
-            --draft
