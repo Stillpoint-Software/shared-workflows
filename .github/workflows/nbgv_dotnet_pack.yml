@@ -1,4 +1,4 @@
-name: Pack & Publish Package
+name: NDGV Pack & Publish Package
 
 on:
   workflow_call:
@@ -34,7 +34,7 @@ jobs:
           ref: ${{ inputs.checkout_ref }}
           fetch-depth: 0
 
-      - name: ⚙️ Setup .NET 
+      - name: ⚙️ Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "9.0.x"
@@ -53,9 +53,13 @@ jobs:
           if [ "${{ inputs.force_dev_prerelease }}" = "true" ]; then
             EXTRA_FLAGS="--include-symbols --include-source"
           fi
+
+          # Pass PublicRelease=true for a public release (omit commit ID)
           dotnet pack --configuration ${{ inputs.build_configuration }} \
                       --no-build --no-restore \
-                      --output ./artifacts $EXTRA_FLAGS
+                      --output ./artifacts \
+                      -p:PublicRelease=true \
+                      $EXTRA_FLAGS
 
       - name: 🚀 Publish to NuGet
         if: ${{ inputs.push_after_pack }}
