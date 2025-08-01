@@ -46,14 +46,16 @@ jobs:
 
       # 3️⃣ bump version & create release branch
       - name: 🗂️  Prepare release
-        id: prep
+        id: prepare
         run: |
           git config user.name  "release-bot"
           git config user.email "release-bot@users.noreply.github.com"
 
-          dotnet nbgv prepare-release --versionIncrement ${{ inputs.increment }}
-
-          echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >>"$GITHUB_OUTPUT"
+          # map UI term 'patch' -> CLI term 'revision'
+          INC=${{ inputs.increment }}
+          [ "$INC" = "patch" ] && INC=revision
+          dotnet nbgv prepare-release --versionIncrement "$INC"
+          echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
 
       # 4️⃣ push both branches + tags
       - name: 🚀 Push branches & tags
