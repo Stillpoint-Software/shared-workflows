@@ -9,7 +9,7 @@ on:
         default: main
         required: true
 
-      increment:       
+      increment:                    # major | minor | patch  (patch means 'revision')
         type: string
         description: "Version increment"
         default: patch
@@ -17,12 +17,12 @@ on:
 
     outputs:
       release_branch:
-        description: "Name of the new release branch"
+        description: "New release branch name"
         value: ${{ jobs.prep.outputs.release_branch }}
 
     secrets:
       GH_TOKEN:
-        required: false
+        required: false      
 
 jobs:
   prep:
@@ -35,32 +35,36 @@ jobs:
       release_branch: ${{ steps.prepare.outputs.release_branch }}
 
     steps:
-      # Checkout the branch/tag supplied by the caller
+      # 1️⃣  Checkout caller-specified ref (caller already validated it exists)
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch }}
           fetch-depth: 0
           token: ${{ env.GH_TOKEN }}
 
-      # .NET SDK & nbgv CLI
+      # 2️⃣  .NET SDK + nbgv CLI
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: 9.0.x }
       - run: dotnet tool restore
 
-      # bump version + create release/vX.Y
+      # 3️⃣  Run nbgv prepare-release (omit flag for patch)
       - name: 🗂️  Prepare release
         id: prepare
         run: |
           git config user.name  "release-bot"
           git config user.email "release-bot@users.noreply.github.com"
 
-          INC=${{ inputs.increment }}
-          [ "$INC" = "patch" ] && INC=revision     # map to CLI terminology
-          dotnet nbgv prepare-release --versionIncrement "$INC"
+          INC=${{ inputs.increment }}          # major | minor | patch
+          if [[ "$INC" == "major" || "$INC" == "minor" ]]; then
+            dotnet nbgv prepare-release --versionIncrement "$INC"
+          else
+            # patch (revision) – CLI bumps revision automatically when flag omitted
+            dotnet nbgv prepare-release
+          fi
 
           echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
 
-      # Push branches & tags and open draft PR
+      # 4️⃣  Push branches & tags; open draft PR back to target_branch
       - run: |
           git push --follow-tags origin "${{ inputs.target_branch }}"
           git push --follow-tags origin "${{ steps.prepare.outputs.release_branch }}"
