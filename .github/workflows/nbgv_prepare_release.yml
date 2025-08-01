@@ -81,16 +81,18 @@ jobs:
         id: prepare
         run: |
           cd "$GITHUB_WORKSPACE"
-
           git config user.name  "release-bot"
           git config user.email "release-bot@users.noreply.github.com"
+      
+          INC=${{ inputs.increment }}
+          case "$INC" in
+            major) FLAGS="--versionIncrement major" ;;
+            minor) FLAGS="--versionIncrement minor" ;;
+            patch) FLAGS="" ;;
+            *) echo "Invalid increment: $INC" && exit 1 ;;
+          esac
 
-          # Use --project . to point at the root (where your version.json lives)
-          # and pass your increment directly.
-          dotnet nbgv prepare-release \
-            --project . \
-            --versionIncrement ${{ inputs.increment }}
-
+          dotnet nbgv prepare-release --project . $FLAGS
           echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
           
       # 4️⃣  Push branches & tags; open draft PR back to target_branch
