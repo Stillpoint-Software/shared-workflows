@@ -1,4 +1,5 @@
-name: Prepare Release
+# shared-workflows/.github/workflows/nbgv_prepare_release.yml
+name: NBGV Prepare Release
 
 on:
   workflow_call:
@@ -15,31 +16,51 @@ on:
         default: patch
     secrets:
       GH_TOKEN:
-        description: "GitHub token (falls back to github.token)"
+        description: "GitHub token (falls back to github.token if not provided)"
         required: false
 
 jobs:
   prep:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
     steps:
-      - name: 📥 Checkout target
+      - name: 📥 Checkout target branch
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch }}
           fetch-depth: 0
-          token: ${{ secrets.GH_TOKEN || github.token }}
+          token: ${{ env.GH_TOKEN }}
 
       - name: ⚙️ Setup .NET 9.0
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "9.0.x"
 
-      - name: 🛠️ Bump version & create branch
-        id: nbgv
-        uses: dotnet/nbgv@main
-        with:
-          version-increment: ${{ inputs.increment }}
-          version-file: version.json
+      - name: 🔧 Restore NBGV tool
+        run: dotnet tool restore
+
+      - name: 🗂️ Prepare release
+        id: prepare
+        run: |
+          # configure git user
+          git config user.name  "release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+
+          # determine flags for major/minor/patch
+          INC=${{ inputs.increment }}
+          case "$INC" in
+            major) FLAGS="--versionIncrement major" ;;
+            minor) FLAGS="--versionIncrement minor" ;;
+            patch) FLAGS="" ;;
+            *) echo "Invalid increment: $INC" && exit 1 ;;
+          esac
+
+          # bump version and create the release branch
+          dotnet nbgv prepare-release --project . $FLAGS
+
+          # expose the new branch name
+          echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
 
     outputs:
-      release_branch: ${{ steps.nbgv.outputs.BranchName }}
+      release_branch: ${{ steps.prepare.outputs.release_branch }}
