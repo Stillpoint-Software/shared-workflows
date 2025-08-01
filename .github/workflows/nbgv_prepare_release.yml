@@ -4,15 +4,18 @@ on:
   workflow_call:
     inputs:
       target_branch:
+        description: "Branch or tag to release from"
         type: string
         required: true
         default: main
       increment:
+        description: "Version increment (major | minor | patch)"
         type: string
         required: true
         default: patch
     secrets:
       GH_TOKEN:
+        description: "GitHub token (falls back to github.token if not provided)"
         required: false
 
 jobs:
@@ -26,34 +29,17 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GH_TOKEN || github.token }}
 
-      - name: ⚙️ Setup .NET & restore NBGV
+      - name: ⚙️ Setup .NET 9.x
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "9.0.x"
-      - run: dotnet tool restore
+          dotnet-version: 9.0.x
 
-      - name: 🖊️ Inject omitCommitId into version.json
-        run: |
-          # Backup and rewrite version.json to include omitCommitId=true
-          jq '.release +={"omitCommitId": true}' version.json > version.tmp.json
-          mv version.tmp.json version.json
-
-      - name: 🗂️ Prepare release
-        id: prepare
-        run: |
-          git config user.name  "release-bot"
-          git config user.email "release-bot@users.noreply.github.com"
-
-          INC=${{ inputs.increment }}
-          case "$INC" in
-            major) FLAGS="--versionIncrement major" ;;
-            minor) FLAGS="--versionIncrement minor" ;;
-            patch) FLAGS="" ;;
-          esac
-
-          dotnet nbgv prepare-release --project "$GITHUB_WORKSPACE" $FLAGS
-
-          echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
+      - name: 🛠️ Bump version & create branch
+        id: nbgv
+        uses: dotnet/nbgv@master
+        with:
+          version-increment: ${{ inputs.increment }}
+          version-file: version.json
 
     outputs:
-      release_branch: ${{ steps.prepare.outputs.release_branch }}
+      release_branch: ${{ steps.nbgv.outputs.BranchName }}
