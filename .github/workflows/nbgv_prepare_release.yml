@@ -60,37 +60,37 @@ jobs:
       
     
       # 3️⃣  Run nbgv prepare-release (omit flag for patch)
-      - name: 🔧 Restore tools & list NBGV
+
+      - name: 🔍 Debug - verify workspace layout
+        run: |
+          echo "GITHUB_WORKSPACE = $GITHUB_WORKSPACE"
+          ls -R "$GITHUB_WORKSPACE"
+
+      - name: 🔧 Restore NBGV tool & confirm it’s installed
         run: |
           dotnet tool restore
           dotnet tool list --local
           dotnet nbgv --version
-  
-      - name: 🔍 Check that NBGV can see your version.json
+
+      - name: 🔍 Confirm NBGV can load your version.json
         run: |
           cd "$GITHUB_WORKSPACE"
-          echo "↳ pwd: $(pwd)"
-          ls -l .
-          dotnet nbgv get-version HEAD --format json
+          dotnet nbgv get-version HEAD
   
       - name: 🗂️ Prepare release with explicit file & diagnostics
         id: prepare
         run: |
           cd "$GITHUB_WORKSPACE"
+
           git config user.name  "release-bot"
           git config user.email "release-bot@users.noreply.github.com"
-    
-          INC=${{ inputs.increment }}
-          if [[ "$INC" == "major" || "$INC" == "minor" ]]; then
-            dotnet nbgv prepare-release \
-              --version-file version.json \
-              --versionIncrement "$INC" \
-              --verbosity diag
-          else
-            dotnet nbgv prepare-release \
-              --version-file version.json \
-              --verbosity diag
-          fi
+
+          # Use --project . to point at the root (where your version.json lives)
+          # and pass your increment directly.
+          dotnet nbgv prepare-release \
+            --project . \
+            --versionIncrement ${{ inputs.increment }}
+
           echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
           
       # 4️⃣  Push branches & tags; open draft PR back to target_branch
