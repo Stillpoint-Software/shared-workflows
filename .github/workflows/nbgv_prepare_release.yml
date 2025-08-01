@@ -41,6 +41,14 @@ jobs:
           echo "Workspace contents:"
           ls -l "$GITHUB_WORKSPACE"
 
+      - name: 🔍 Debug show & parse version.json
+        run: |
+          echo "— version.json content —"
+          cat "$GITHUB_WORKSPACE/version.json"
+          echo
+          echo "— NBGV get-version output —"
+          dotnet nbgv get-version HEAD
+
       - name: 🗂️ Prepare release
         id: prepare
         run: |
