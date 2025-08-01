@@ -1,70 +1,48 @@
-name: "NBGV: Prepare Release"
+name: NBGV:Prepare Release
 
 on:
   workflow_call:
     inputs:
       target_branch:
         type: string
+        description: "Branch or tag to release from"
         default: main
+        required: true
       increment:
         type: string
+        description: "Version increment (major | minor | patch)"
         default: patch
+        required: true
     secrets:
       GH_TOKEN:
+        description: "GitHub token (falls back to github.token if not provided)"
         required: false
 
 jobs:
   prep:
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
     steps:
-      - name: Checkout
+      # 1️⃣ Check out the target branch
+      - name: 📥 Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch }}
           fetch-depth: 0
-          token: ${{ env.GH_TOKEN }}
+          token: ${{ secrets.GH_TOKEN || github.token }}
 
-      - name: Setup .NET & NBGV
+      # 2️⃣ Set up .NET SDK
+      - name: ⚙️ Setup .NET 9.0
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
-      - run: dotnet tool restore
 
-      - name: 📂 Debug show where version.json is
-        run: |
-          echo "GITHUB_WORKSPACE = $GITHUB_WORKSPACE"
-          # List everything one level up and at workspace
-          echo "Parent dir contents:"
-          ls -l "$(dirname "$GITHUB_WORKSPACE")"
-          echo "Workspace contents:"
-          ls -l "$GITHUB_WORKSPACE"
-
-      - name: 🔍 Debug show & parse version.json
-        run: |
-          echo "— version.json content —"
-          cat "$GITHUB_WORKSPACE/version.json"
-          echo
-          echo "— NBGV get-version output —"
-          dotnet nbgv get-version HEAD
-
-      - name: 🗂️ Prepare release
-        id: prepare
-        run: |
-          git config user.name  "release-bot"
-          git config user.email "release-bot@users.noreply.github.com"
-
-          INC=${{ inputs.increment }}
-          case "$INC" in
-            major) FLAGS="--versionIncrement major" ;;
-            minor) FLAGS="--versionIncrement minor" ;;
-            patch) FLAGS="" ;;
-            *) echo "Invalid increment: $INC" && exit 1 ;;
-          esac
-
-          dotnet nbgv prepare-release --project . $FLAGS
-          echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
+      # 3️⃣ Bump version & create release branch
+      - name: 🗂️ Prepare Release
+        id: nbgv
+        uses: dotnet/nbgv@main
+        with:
+          version-increment: ${{ inputs.increment }}   # major | minor | patch
+          version-file: version.json                   # explicitly point at your version.json
 
     outputs:
-      release_branch: ${{ steps.prepare.outputs.release_branch }}
+      release_branch: ${{ steps.nbgv.outputs.BranchName }}
