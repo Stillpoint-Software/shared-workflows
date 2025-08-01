@@ -28,31 +28,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout target
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch }}
           fetch-depth: 0
           token: ${{ secrets.GH_TOKEN || github.token }}
 
-      - name: ⚙️ Setup .NET 9.x
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 9.0.x
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: 9.0.x }
 
-      - name: 📋 Check version.json exists
+      - name: 🔍 Ensure version.json exists
+        run: test -f "${{ inputs.version_file_path }}"
+
+      - name: 🔄 Map patch → revision
+        id: map
         run: |
-          if [ ! -f "${{ inputs.version_file_path }}" ]; then
-            echo "::error::version.json not found at ${{ inputs.version_file_path }}"
-            exit 1
-          fi
-          cat "${{ inputs.version_file_path }}"
+          INC="${{ inputs.increment }}"
+          [ "$INC" = "patch" ] && INC=revision
+          echo "inc=$INC" >> "$GITHUB_OUTPUT"
 
       - name: 🛠️ Bump version & create branch
         id: nbgv
-        uses: dotnet/nbgv@master
+        uses: dotnet/nbgv@v0.4.2
         with:
-          version-increment: ${{ inputs.increment }}
-          version-file: ${{ inputs.version_file_path }}
+          versionIncrement: ${{ steps.map.outputs.inc }}
+          versionFile:      ${{ inputs.version_file_path }}
 
     outputs:
       release_branch: ${{ steps.nbgv.outputs.BranchName }}
