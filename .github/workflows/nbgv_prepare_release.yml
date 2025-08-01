@@ -47,17 +47,6 @@ jobs:
         with: { dotnet-version: 9.0.x }
       - run: dotnet tool restore
     
-      # 🔎 ADD THIS TEMPORARY DEBUG STEP
-      - name: 🐛 Debug list working dir
-        run: |
-          echo "PWD=$(pwd)"
-          echo "--- ls -a ---"
-          ls -a
-
-      - name: 🐛 dump version file with hexdump
-        run: |
-          hexdump -C version.json | head -20
-
       # 3️⃣  Run nbgv prepare-release (omit flag for patch)
       - name: 🗂️  Prepare release
         id: prepare
