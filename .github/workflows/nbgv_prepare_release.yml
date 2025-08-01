@@ -34,14 +34,6 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
-      - name: 🖊️ (Optional) Inject omitCommitId
-        if: always()
-        run: |
-          # Only do this if you truly need to suppress the +g<hash> suffix
-          tmp=$(mktemp)
-          jq '.release += {"omitCommitId": true}' version.json > "$tmp"
-          mv "$tmp" version.json
-
       - name: 🛠️ Bump version & create branch
         id: nbgv
         uses: dotnet/nbgv@master
