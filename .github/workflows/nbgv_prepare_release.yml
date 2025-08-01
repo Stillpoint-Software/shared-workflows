@@ -60,27 +60,12 @@ jobs:
       
     
       # 3️⃣  Run nbgv prepare-release (omit flag for patch)
-
-      - name: 🔍 Debug - verify workspace layout
-        run: |
-          echo "GITHUB_WORKSPACE = $GITHUB_WORKSPACE"
-          ls -R "$GITHUB_WORKSPACE"
-
-      - name: 🔧 Restore NBGV tool & confirm it’s installed
-        run: |
-          dotnet tool restore
-          dotnet tool list --local
-          dotnet nbgv --version
-
-      - name: 🔍 Confirm NBGV can load your version.json
-        run: |
-          cd "$GITHUB_WORKSPACE"
-          dotnet nbgv get-version HEAD
-  
       - name: 🗂️ Prepare release with explicit file & diagnostics
         id: prepare
         run: |
-          cd "$GITHUB_WORKSPACE"
+         # compute the parent folder of $GITHUB_WORKSPACE
+          PARENT_DIR="${GITHUB_WORKSPACE%/*}"
+      
           git config user.name  "release-bot"
           git config user.email "release-bot@users.noreply.github.com"
       
@@ -88,11 +73,12 @@ jobs:
           case "$INC" in
             major) FLAGS="--versionIncrement major" ;;
             minor) FLAGS="--versionIncrement minor" ;;
-            patch) FLAGS="" ;;
+            patch) FLAGS="" ;;  # omit flag for 'patch'
             *) echo "Invalid increment: $INC" && exit 1 ;;
           esac
-
-          dotnet nbgv prepare-release --project . $FLAGS
+      
+          # point at the directory that actually contains version.json
+          dotnet nbgv prepare-release --project "$PARENT_DIR" $FLAGS
           echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
           
       # 4️⃣  Push branches & tags; open draft PR back to target_branch
