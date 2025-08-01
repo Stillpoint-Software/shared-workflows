@@ -43,11 +43,9 @@ jobs:
       - name: 🗂️ Prepare release
         id: prepare
         run: |
-          # configure git user
           git config user.name  "release-bot"
           git config user.email "release-bot@users.noreply.github.com"
 
-          # determine flags for major/minor/patch
           INC=${{ inputs.increment }}
           case "$INC" in
             major) FLAGS="--versionIncrement major" ;;
@@ -56,10 +54,9 @@ jobs:
             *) echo "Invalid increment: $INC" && exit 1 ;;
           esac
 
-          # bump version and create the release branch
+          # Force the lookup root to the repo root (where version.json is)
           dotnet nbgv prepare-release --project . $FLAGS
 
-          # expose the new branch name
           echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
 
     outputs:
