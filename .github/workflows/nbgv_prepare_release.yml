@@ -1,53 +1,45 @@
-name: Prepare Release & Publish Package
+name: NBGV: Prepare Release
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       target_branch:
         description: "Branch or tag to release from"
-        type: choice
-        options: [ main, master, develop ]
+        type: string
+        required: true
         default: main
-        required: true
       increment:
-        description: "Version bump"
-        type: choice
-        options: [ major, minor, patch ]
-        default: patch
+        description: "Version increment (major | minor | patch)"
+        type: string
         required: true
+        default: patch
+    secrets:
+      GH_TOKEN:
+        description: "GitHub token (falls back to github.token)"
+        required: false
 
 jobs:
-  validate_branch:
+  prep:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: 📥 Checkout target
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          ref: ${{ inputs.target_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN || github.token }}
 
-      - name: 🔍 Ensure target branch exists
-        run: |
-          if ! git ls-remote --exit-code --heads origin "${{ inputs.target_branch }}"; then
-            echo "::error::Ref '${{ inputs.target_branch }}' not found."
-            exit 1
-          fi
+      - name: ⚙️ Setup .NET 9.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
 
-  prepare:
-    needs: validate_branch
-    uses: Stillpoint-Software/shared-workflows/.github/workflows/nbgv_prepare_release.yml@main
-    with:
-      target_branch: ${{ inputs.target_branch }}
-      increment:     ${{ inputs.increment }}
-    secrets:
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      - name: 🛠️ Bump version & create branch
+        id: nbgv
+        uses: dotnet/nbgv@main
+        with:
+          version-increment: ${{ inputs.increment }}
+          version-file: version.json
 
-  publish:
-    needs: prepare
-    uses: Stillpoint-Software/shared-workflows/.github/workflows/nbgv_dotnet_pack.yml@main
-    with:
-      checkout_ref:        ${{ needs.prepare.outputs.release_branch }}
-      build_configuration: ${{ inputs.target_branch == 'develop' && 'Develop' || 'Release' }}
-      push_after_pack:     true
-      force_dev_prerelease: ${{ inputs.target_branch == 'develop' }}
-    secrets:
-      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-
+    outputs:
+      release_branch: ${{ steps.nbgv.outputs.BranchName }}
