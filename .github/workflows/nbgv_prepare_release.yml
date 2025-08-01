@@ -40,27 +40,12 @@ jobs:
       - name: 🔧 Restore NBGV tool
         run: dotnet tool restore
 
-      - name: 🗂️ Prepare release
-        id: prepare
-        run: |
-          # Make sure we're in the repo root where version.json lives
-          cd "$GITHUB_WORKSPACE"
-          echo "Running in: $(pwd)"
-          ls -l .
+      - name: 🛠️ Bump version & create branch
+        id: nbgv
+        uses: dotnet/nbgv@main
+        with:
+          version-increment: ${{ inputs.increment }}   # major | minor | patch
+          version-file: version.json                   # explicitly point at your file
 
-          git config user.name  "release-bot"
-          git config user.email "release-bot@users.noreply.github.com"
-
-          INC=${{ inputs.increment }}
-          case "$INC" in
-            major) FLAGS="--versionIncrement major" ;;
-            minor) FLAGS="--versionIncrement minor" ;;
-            patch) FLAGS="" ;;
-            *) echo "Invalid increment: $INC" && exit 1 ;;
-          esac
-
-          # Use the short -p flag pointing at the current directory
-          dotnet nbgv prepare-release -p "$GITHUB_WORKSPACE" $FLAGS
-
-          echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
-
+    outputs:
+          release_branch: ${{ steps.nbgv.outputs.BranchName }}
