@@ -1,42 +1,33 @@
 name: nbgv_dotnet_pack
+
 on:
   workflow_call:
     inputs:
-      build_configuration:
-        description: "MSBuild configuration (Release, Develop, Debug …)"
-        required: false
+      # 🆕 caller chooses which commit / branch / tag to build
+      checkout_ref:
+        description: "Git ref to check out (branch, tag, or SHA)"
         type: string
-        default: "Release"
+        default: ${{ github.ref }}
 
-      dotnet_version:
-        description: ".NET SDK channel"
-        required: false
+      build_configuration:
         type: string
-        default: "9.0.x"
+        default: Release
 
       push_after_pack:
-        description: "Push the .nupkg to nuget_source?"
-        required: false
+        type: boolean
+        default: false
+
+      force_dev_prerelease:
         type: boolean
         default: false
 
       nuget_source:
-        description: "Feed URL"
-        required: false
         type: string
-        default: "https://api.nuget.org/v3/index.json"
-
-      force_dev_prerelease:
-        description: "Force -dev prerelease tag even on main/release branches"
-        required: false
-        type: boolean
-        default: false
+        default: https://api.nuget.org/v3/index.json
 
     secrets:
       NUGET_API_KEY:
-        description: "API key for nuget_source (needed if push_after_pack=true)"
         required: false
-
 jobs:
   build-pack:
     runs-on: ubuntu-latest
