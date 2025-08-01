@@ -42,10 +42,21 @@ jobs:
           fetch-depth: 0
           token: ${{ env.GH_TOKEN }}
 
+      - name: 🔧 List local tools & NBGV version
+        run: |
+           dotnet tool restore
+           dotnet tool list --local
+           dotnet nbgv --version
+
+      - name: 🔍 Show loaded version
+        run: |
+           dotnet nbgv show-version --output json
+
       # 2️⃣  .NET SDK + nbgv CLI
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: 9.0.x }
       - run: dotnet tool restore
+      
     
       # 3️⃣  Run nbgv prepare-release (omit flag for patch)
       - name: 🗂️  Prepare release
