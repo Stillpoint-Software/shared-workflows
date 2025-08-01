@@ -55,7 +55,7 @@ jobs:
           esac
 
           # Force the lookup root to the repo root (where version.json is)
-          dotnet nbgv prepare-release --project . $FLAGS
+          dotnet nbgv prepare-release --project "$GITHUB_WORKSPACE" $FLAGS
 
           echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
 
