@@ -1,75 +1,65 @@
-name: nbgv_dotnet_pack
+name: DotNet: Pack & Publish Package
 
 on:
   workflow_call:
     inputs:
-      # 🆕 caller chooses which commit / branch / tag to build
       checkout_ref:
-        description: "Git ref to check out (branch, tag, or SHA)"
+        description: "Branch/ref to check out and pack"
         type: string
-        default: ${{ github.ref }}
-
+        required: true
       build_configuration:
+        description: "Build configuration (e.g. Release, Develop)"
         type: string
-        default: Release
-
+        required: true
       push_after_pack:
+        description: "Whether to push the resulting .nupkg"
         type: boolean
-        default: false
-
+        required: true
       force_dev_prerelease:
+        description: "Whether to include dev prerelease symbols"
         type: boolean
-        default: false
-
-      nuget_source:
-        type: string
-        default: https://api.nuget.org/v3/index.json
-
+        required: true
     secrets:
       NUGET_API_KEY:
-        required: false
-jobs:
-  build-pack:
-    runs-on: ubuntu-latest
+        description: "API key for pushing to NuGet.org"
+        required: true
 
+jobs:
+  pack:
+    runs-on: ubuntu-latest
     steps:
-      - name: ⬇️  Checkout
+      - name: 📥 Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.checkout_ref }}   # caller-supplied branch/tag/SHA
+          ref: ${{ inputs.checkout_ref }}
           fetch-depth: 0
 
-      - name: 🛠️  Setup .NET
+      - name: ⚙️ Setup .NET 
         uses: actions/setup-dotnet@v4
-        with: 
-          dotnet-version: ${{ inputs.dotnet_version }} 
+        with:
+          dotnet-version: 9.0.x
 
-      - name: 🔧 Restore local tools
-        run: dotnet tool restore
+      - name: 🔄 Restore dependencies
+        run: dotnet restore
 
-      - name: 📜 Compute version (NBGV)
-        run: dotnet nbgv cloud -v q
-
-      - name: 🏗️  Build
-        run: |
-          EXTRA=""
-          if [ "${{ inputs.force_dev_prerelease }}" = "true" ]; then
-            EXTRA="-p:NBGV_PublicRelease=false"
-          fi
-          dotnet build -c ${{ inputs.build_configuration }} $EXTRA
+      - name: 🏗️ Build
+        run: dotnet build --configuration ${{ inputs.build_configuration }} --no-restore
 
       - name: 📦 Pack
+        id: pack
         run: |
-          EXTRA=""
+          # include symbols/source on dev prerelease if requested
+          EXTRA_FLAGS=""
           if [ "${{ inputs.force_dev_prerelease }}" = "true" ]; then
-            EXTRA="-p:NBGV_PublicRelease=false"
+            EXTRA_FLAGS="--include-symbols --include-source"
           fi
-          dotnet pack -c ${{ inputs.build_configuration }} -o output $EXTRA
+          dotnet pack --configuration ${{ inputs.build_configuration }} \
+                      --no-build --no-restore \
+                      --output ./artifacts $EXTRA_FLAGS
 
-      - name: 🚀 Push to NuGet
-        if: inputs.push_after_pack == true
+      - name: 🚀 Publish to NuGet
+        if: ${{ inputs.push_after_pack }}
         run: |
-          dotnet nuget push "output/*.nupkg" \
-            --source "${{ inputs.nuget_source }}" \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
-            --skip-duplicate
+          dotnet nuget push ./artifacts/*.nupkg \
+            --api-key ${{ secrets.NUGET_API_KEY }} \
+            --source https://api.nuget.org/v3/index.json
