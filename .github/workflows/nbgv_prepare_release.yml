@@ -13,6 +13,11 @@ on:
         type: string
         required: true
         default: patch
+      version_file_path:  # Add this parameter
+        description: "Path to version.json file (relative to repo root)"
+        type: string
+        required: false
+        default: "version.json"
     secrets:
       GH_TOKEN:
         description: "GitHub token (falls back to github.token if not provided)"
@@ -34,12 +39,20 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
+      - name: 📋 Check version.json exists
+        run: |
+          if [ ! -f "${{ inputs.version_file_path }}" ]; then
+            echo "::error::version.json not found at ${{ inputs.version_file_path }}"
+            exit 1
+          fi
+          cat "${{ inputs.version_file_path }}"
+
       - name: 🛠️ Bump version & create branch
         id: nbgv
         uses: dotnet/nbgv@master
         with:
           version-increment: ${{ inputs.increment }}
-          version-file: version.json
+          version-file: ${{ inputs.version_file_path }}
 
     outputs:
       release_branch: ${{ steps.nbgv.outputs.BranchName }}
