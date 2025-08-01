@@ -60,21 +60,39 @@ jobs:
       
     
       # 3️⃣  Run nbgv prepare-release (omit flag for patch)
-      - name: 🗂️  Prepare release
+      - name: 🔧 Restore tools & list NBGV
+        run: |
+          dotnet tool restore
+          dotnet tool list --local
+          dotnet nbgv --version
+  
+      - name: 🔍 Check that NBGV can see your version.json
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          echo "↳ pwd: $(pwd)"
+          ls -l .
+          dotnet nbgv get-version HEAD --format json
+  
+      - name: 🗂️ Prepare release with explicit file & diagnostics
         id: prepare
         run: |
+          cd "$GITHUB_WORKSPACE"
           git config user.name  "release-bot"
           git config user.email "release-bot@users.noreply.github.com"
-
-          INC=${{ inputs.increment }}          # major | minor | patch
+    
+          INC=${{ inputs.increment }}
           if [[ "$INC" == "major" || "$INC" == "minor" ]]; then
-            dotnet nbgv prepare-release --versionIncrement "$INC"
+            dotnet nbgv prepare-release \
+              --version-file version.json \
+              --versionIncrement "$INC" \
+              --verbosity diag
           else
-            # patch (revision) – CLI bumps revision automatically when flag omitted
-            dotnet nbgv prepare-release
+            dotnet nbgv prepare-release \
+              --version-file version.json \
+              --verbosity diag
           fi
           echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
-
+          
       # 4️⃣  Push branches & tags; open draft PR back to target_branch
       - run: |
           git push --follow-tags origin "${{ inputs.target_branch }}"
