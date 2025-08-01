@@ -1,3 +1,4 @@
+# shared-workflows/.github/workflows/nbgv_prepare_release.yml
 name: NBGV Prepare Release
 
 on:
@@ -15,31 +16,61 @@ on:
         default: patch
     secrets:
       GH_TOKEN:
-        description: "GitHub token (falls back to github.token if not provided)"
+        description: "GitHub token (falls back to github.token)"
         required: false
 
 jobs:
   prep:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+
     steps:
+      # 1️⃣ Checkout the code
       - name: 📥 Checkout target branch
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch }}
           fetch-depth: 0
-          token: ${{ secrets.GH_TOKEN || github.token }}
+          token: ${{ env.GH_TOKEN }}
 
-      - name: ⚙️ Setup .NET 9.x
+      # 2️⃣ Install .NET & the NBGV tool
+      - name: ⚙️ Setup .NET & restore NBGV tool
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
+      - name: 🔧 Restore NBGV CLI
+        run: dotnet tool restore
 
-      - name: 🛠️ Bump version & create branch
-        id: nbgv
-        uses: dotnet/nbgv@master
-        with:
-          version-increment: ${{ inputs.increment }}
-          version-file: version.json
+      # 3️⃣ Inject omitCommitId so your NuGet version has no git‐hash suffix
+      - name: 🖊️ Inject omitCommitId into version.json
+        run: |
+          tmp=$(mktemp)
+          jq '.release += {"omitCommitId": true}' version.json > "$tmp"
+          mv "$tmp" version.json
+
+      # 4️⃣ Bump the version, create the release branch
+      - name: 🗂️ Prepare release
+        id: prepare
+        run: |
+          cd "$GITHUB_WORKSPACE"
+
+          git config user.name  "release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+
+          INC=${{ inputs.increment }}
+          case "$INC" in
+            major) FLAGS="--versionIncrement major" ;;
+            minor) FLAGS="--versionIncrement minor" ;;
+            patch) FLAGS="" ;;        # omit for revision bump
+            *) echo "Invalid increment: $INC" && exit 1 ;;
+          esac
+
+          # Force Nerdbank to load your version.json (which starts at 1.0.0)
+          dotnet nbgv prepare-release -p "$GITHUB_WORKSPACE" $FLAGS
+
+          # Export the new branch name
+          echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
 
     outputs:
-      release_branch: ${{ steps.nbgv.outputs.BranchName }}
+      release_branch: ${{ steps.prepare.outputs.release_branch }}
