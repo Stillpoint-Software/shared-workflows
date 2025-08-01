@@ -1,48 +1,59 @@
-# shared-workflows/.github/workflows/nbgv_prepare_release.yml
 name: NBGV Prepare Release
 
 on:
   workflow_call:
     inputs:
       target_branch:
-        description: "Branch or tag to release from"
         type: string
         required: true
         default: main
       increment:
-        description: "Version increment (major | minor | patch)"
         type: string
         required: true
         default: patch
     secrets:
       GH_TOKEN:
-        description: "GitHub token (falls back to github.token if not provided)"
         required: false
 
 jobs:
   prep:
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
     steps:
       - name: 📥 Checkout target branch
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch }}
           fetch-depth: 0
-          token: ${{ env.GH_TOKEN }}
+          token: ${{ secrets.GH_TOKEN || github.token }}
 
-      - name: ⚙️ Setup .NET 9.0
+      - name: ⚙️ Setup .NET & restore NBGV
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "9.0.x"
+      - run: dotnet tool restore
 
-      - name: 🛠️ Bump version & create branch
-        id: nbgv
-        uses: dotnet/nbgv@master 
-        with:
-          version-increment: ${{ inputs.increment }}   # major | minor | patch
-          version-file: version.json                   # explicitly point at your file
+      - name: 🖊️ Inject omitCommitId into version.json
+        run: |
+          # Backup and rewrite version.json to include omitCommitId=true
+          jq '.release +={"omitCommitId": true}' version.json > version.tmp.json
+          mv version.tmp.json version.json
+
+      - name: 🗂️ Prepare release
+        id: prepare
+        run: |
+          git config user.name  "release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+
+          INC=${{ inputs.increment }}
+          case "$INC" in
+            major) FLAGS="--versionIncrement major" ;;
+            minor) FLAGS="--versionIncrement minor" ;;
+            patch) FLAGS="" ;;
+          esac
+
+          dotnet nbgv prepare-release --project "$GITHUB_WORKSPACE" $FLAGS
+
+          echo "release_branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
 
     outputs:
-          release_branch: ${{ steps.nbgv.outputs.BranchName }}
+      release_branch: ${{ steps.prepare.outputs.release_branch }}
