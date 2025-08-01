@@ -6,40 +6,53 @@ on:
       target_branch:
         description: "Branch or tag to release from"
         type: string
-        required: true
         default: main
-      increment:
-        description: "Version increment (major | minor | patch)"
-        type: string
         required: true
-        default: patch
-      version_file_path:  # Add this parameter
-        description: "Path to version.json file (relative to repo root)"
+
+      increment:                     # major | minor | patch (patch → revision later)
+        description: "Version increment"
         type: string
+        default: patch
+        required: true
+
+      version_file_path:             # path relative to repo root
+        description: "Path to version.json"
+        type: string
+        default: version.json
         required: false
-        default: "version.json"
+
     secrets:
       GH_TOKEN:
-        description: "GitHub token (falls back to github.token if not provided)"
+        description: "GitHub token (falls back to github.token)"
         required: false
 
 jobs:
   prep:
     runs-on: ubuntu-latest
+
+    outputs:
+      release_branch: ${{ steps.nbgv.outputs.BranchName }}
+
     steps:
+      # 1️⃣  Checkout the target branch / tag
       - name: 📥 Checkout target
-      - uses: actions/checkout@v4
+        uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch }}
           fetch-depth: 0
           token: ${{ secrets.GH_TOKEN || github.token }}
 
-      - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: 9.0.x }
+      # 2️⃣  Install .NET SDK (for the nbgv tool)
+      - name: ⚙️ Setup .NET 9.x
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
 
+      # 3️⃣  Ensure version.json exists at the given path
       - name: 🔍 Ensure version.json exists
         run: test -f "${{ inputs.version_file_path }}"
 
+      # 4️⃣  Map "patch" -> "revision" (CLI nomenclature)
       - name: 🔄 Map patch → revision
         id: map
         run: |
@@ -47,12 +60,10 @@ jobs:
           [ "$INC" = "patch" ] && INC=revision
           echo "inc=$INC" >> "$GITHUB_OUTPUT"
 
+      # 5️⃣  Bump version and create the release branch
       - name: 🛠️ Bump version & create branch
         id: nbgv
         uses: dotnet/nbgv@v0.4.2
         with:
           versionIncrement: ${{ steps.map.outputs.inc }}
           versionFile:      ${{ inputs.version_file_path }}
-
-    outputs:
-      release_branch: ${{ steps.nbgv.outputs.BranchName }}
