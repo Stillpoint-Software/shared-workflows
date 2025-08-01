@@ -1,4 +1,4 @@
-name: DotNet: Pack & Publish Package
+name: Pack & Publish Package
 
 on:
   workflow_call:
