@@ -82,7 +82,6 @@ jobs:
         cookiecutter base-template \
           --replay-file .cookiecutter.json \
           --no-input \
-          # --extra-context '{"templates": "main"}'  # uncomment if still needed
           --overwrite-if-exists \
           --output-dir template-base
 
