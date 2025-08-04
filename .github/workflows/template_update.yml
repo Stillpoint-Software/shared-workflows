@@ -86,17 +86,17 @@ jobs:
           --overwrite-if-exists \
           --output-dir template-base
 
-    - name: Generate new template output
+    - name: Generate base template output
       if: env.SHA_CHANGED == 'true'
       run: |
         rm -rf ~/.cookiecutters/*
-        mkdir -p template-new
-        cookiecutter template-source \
+        mkdir -p template-base
+        jq '.cookiecutter.templates = "main"' .cookiecutter.json \
+          > tmp.json && mv tmp.json .cookiecutter.json  # remove if not needed
+        cookiecutter base-template \
           --replay-file .cookiecutter.json \
-          --no-input \
-          # --extra-context '{"templates": "main"}'  # uncomment if still needed
           --overwrite-if-exists \
-          --output-dir template-new
+          --output-dir template-base
 
     - name: Apply patch if changes & create PR
       if: env.SHA_CHANGED == 'true'
