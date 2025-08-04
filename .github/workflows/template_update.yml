@@ -22,7 +22,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # ─────────────────────────── Setup ───────────────────────────
     - name: Checkout project repo
       uses: actions/checkout@v4
       with:
@@ -38,7 +37,6 @@ jobs:
     - name: Install dependencies
       run: pip install cookiecutter jq
 
-    # ───────────── Read old SHA & compare with template HEAD ─────────────
     - name: Read old template SHA
       id: old_sha
       run: |
@@ -54,7 +52,7 @@ jobs:
       run: |
         echo "sha=$(git ls-remote '${{ inputs.template_repo }}' HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
 
-    - name: Decide whether to continue
+    - name: Determine if Template was updated
       run: |
         if [ "${{ steps.old_sha.outputs.sha }}" = "${{ steps.new_sha.outputs.sha }}" ]; then
           echo "SHA_CHANGED=false" >> "$GITHUB_ENV"
@@ -66,7 +64,6 @@ jobs:
       if: env.SHA_CHANGED == 'false'
       run: echo "✂️  SHA unchanged; nothing to update."
 
-    # ───────────────── Clone template repo at both SHAs ─────────────────
     - name: Clone template at OLD SHA
       if: env.SHA_CHANGED == 'true'
       run: |
@@ -77,7 +74,6 @@ jobs:
       if: env.SHA_CHANGED == 'true'
       run: git clone '${{ inputs.template_repo }}' template-source
 
-    # ────────────────────── Render OLD template ──────────────────────
     - name: Render OLD template (base-template → template-base)
       if: env.SHA_CHANGED == 'true'
       run: |
@@ -89,7 +85,6 @@ jobs:
           --overwrite-if-exists \
           --output-dir template-base
 
-    # ────────────────────── Render NEW template ──────────────────────
     - name: Render NEW template (template-source → template-new)
       if: env.SHA_CHANGED == 'true'
       run: |
@@ -101,7 +96,6 @@ jobs:
           --overwrite-if-exists \
           --output-dir template-new
 
-    # ───────────── diff, merge, bump SHA, push branch, open PR ─────────────
     - name: Apply patch & raise PR
       if: env.SHA_CHANGED == 'true'
       shell: bash
