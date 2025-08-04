@@ -20,8 +20,6 @@ jobs:
   template-update:
     runs-on: ubuntu-latest
     steps:
-
-      # 1. Checkout target branch (full history, can push)
       - name: Checkout project repo
         uses: actions/checkout@v4
         with:
@@ -29,7 +27,6 @@ jobs:
           ref: ${{ inputs.repo_branch }}
           fetch-depth: 0
 
-      # 2. Set up Python & install deps
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -37,7 +34,6 @@ jobs:
       - name: Install dependencies
         run: pip install cookiecutter jq
 
-      # 3. Read old SHA
       - name: Read old template SHA
         id: get_old_sha
         run: |
@@ -48,14 +44,12 @@ jobs:
           fi
           echo "old_sha=$OLD_SHA" >> $GITHUB_OUTPUT
 
-      # 4. Fetch new SHA
       - name: Fetch new template SHA
         id: get_new_sha
         run: |
           NEW_SHA=$(git ls-remote "${{ inputs.template_repo }}" HEAD | cut -f1)
           echo "new_sha=$NEW_SHA" >> $GITHUB_OUTPUT
 
-      # 5. Determine if SHA changed
       - name: Determine if SHA changed
         id: sha_check
         run: |
@@ -65,14 +59,12 @@ jobs:
             echo "SHA_CHANGED=false" >> $GITHUB_ENV
           fi
 
-      # 6. Exit early if SHA unchanged
       - name: Exit if SHA unchanged
         if: env.SHA_CHANGED == 'false'
         run: |
           echo "✂️ SHA unchanged; nothing to update."
           exit 0
 
-      # 7. Clone both template versions
       - name: Clone base template at OLD SHA
         if: env.SHA_CHANGED == 'true'
         run: |
@@ -85,22 +77,6 @@ jobs:
         if: env.SHA_CHANGED == 'true'
         run: git clone "${{ inputs.template_repo }}" template-source
 
-      # 8. Determine sub-template path
-      - name: Determine sub-template path
-        id: template_path
-        if: env.SHA_CHANGED == 'true'
-        run: |
-          ASP=$(jq -r '.cookiecutter.is_aspire // "no"' .cookiecutter.json)
-          DOC=$(jq -r '.cookiecutter.is_docker // "no"' .cookiecutter.json)
-          if [ "$ASP" = "yes" ]; then
-            echo "path=aspire-project" >> $GITHUB_OUTPUT
-          elif [ "$DOC" = "yes" ]; then
-            echo "path=docker-project" >> $GITHUB_OUTPUT
-          else
-            echo "::error ::No valid sub-template in .cookiecutter.json" && exit 1
-          fi
-
-      # 9. Render base & new template outputs
       - name: Generate base template output
         if: env.SHA_CHANGED == 'true'
         run: |
@@ -123,7 +99,6 @@ jobs:
             --overwrite-if-exists \
             --output-dir template-new
 
-      # 10. Diff + merge + bump + branch + commit + push
       - name: Apply patch if changes
         if: env.SHA_CHANGED == 'true'
         shell: bash
@@ -151,7 +126,6 @@ jobs:
             .cookiecutter.json > tmp.json && mv tmp.json .cookiecutter.json
           git add .cookiecutter.json
 
-          # create branch, commit & push
           UPDATE_BRANCH="template-update-${{ steps.get_new_sha.outputs.new_sha }}"
           echo "UPDATE_BRANCH=${UPDATE_BRANCH}" >> $GITHUB_ENV
           git checkout -b "${UPDATE_BRANCH}"
@@ -160,8 +134,6 @@ jobs:
           git commit -m "chore: merge template updates ${{ steps.get_old_sha.outputs.old_sha }} → ${{ steps.get_new_sha.outputs.new_sha }}"
           git push origin "${UPDATE_BRANCH}"
 
-      # 11. Create Pull Request (even if only .cookiecutter.json changed)
-       # After your commit & push step…
       - name: Create Pull Request via GitHub CLI
         if: env.SHA_CHANGED == 'true'
         env:
