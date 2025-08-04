@@ -63,7 +63,9 @@ jobs:
       # 5️⃣  Bump version and create the release branch
       - name: 🛠️ Bump version & create branch
         id: nbgv
-        uses: dotnet/nbgv@v0.4.2
+        uses: dotnet/nbgv@v0.4.2          
         with:
+          toolVersion: 3.8.38-alpha      
           versionIncrement: ${{ steps.map.outputs.inc }}
           versionFile:      ${{ inputs.version_file_path }}
+
