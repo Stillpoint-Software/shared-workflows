@@ -1,4 +1,4 @@
-name: NDGV Pack & Publish Package
+name: NBGV Pack & Publish Package
 
 on:
   workflow_call:
