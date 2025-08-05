@@ -18,7 +18,8 @@ jobs:
             test-results-net9.0
             test-results-net8.0
           name: Unit Tests (.NET 8 & 9)
-          path: '*.trx'
+          # only consider trx files; placeholders will be ignored
+          path: '**/*.trx'
           reporter: dotnet-trx
           fail-on-error: false
           fail-on-empty: false
