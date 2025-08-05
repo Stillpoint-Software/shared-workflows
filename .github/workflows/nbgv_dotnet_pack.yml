@@ -28,7 +28,7 @@ jobs:
   pack:
     runs-on: ubuntu-latest
     steps:
-      - name: 📥 Checkout code
+      - name: 📥 Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.checkout_ref }}
@@ -39,31 +39,38 @@ jobs:
         with:
           dotnet-version: "9.0.x"
 
-      - name: 🔄 Restore dependencies
+      - name: 🔄 Restore
         run: dotnet restore
 
       - name: 🏗️ Build
-        run: dotnet build --configuration ${{ inputs.build_configuration }} --no-restore
+        run: dotnet build -c ${{ inputs.build_configuration }} --no-restore
 
       - name: 📦 Pack
-        id: pack
         run: |
-          # include symbols/source on dev prerelease if requested
+          # symbols/source only when caller asks
           EXTRA_FLAGS=""
           if [ "${{ inputs.force_dev_prerelease }}" = "true" ]; then
             EXTRA_FLAGS="--include-symbols --include-source"
           fi
 
-          # Pass PublicRelease=true for a public release (omit commit ID)
-          dotnet pack --configuration ${{ inputs.build_configuration }} \
+          # PublicRelease strips commit-height *only* on Release builds
+          PUBLIC_RELEASE_FLAG=""
+          if [ "${{ inputs.build_configuration }}" = "Release" ]; then
+            PUBLIC_RELEASE_FLAG="-p:PublicRelease=true"
+          fi
+
+          dotnet pack -c ${{ inputs.build_configuration }} \
                       --no-build --no-restore \
                       --output ./artifacts \
-                      -p:PublicRelease=true \
+                      $PUBLIC_RELEASE_FLAG \
                       $EXTRA_FLAGS
 
       - name: 🚀 Publish to NuGet
         if: ${{ inputs.push_after_pack }}
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
-          dotnet nuget push ./artifacts/*.nupkg \
-            --api-key ${{ secrets.NUGET_API_KEY }} \
-            --source https://api.nuget.org/v3/index.json
+          dotnet nuget push "./artifacts/*.nupkg" \
+            --api-key "$NUGET_API_KEY" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
