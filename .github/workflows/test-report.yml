@@ -11,6 +11,32 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Download .NET 9.0 Test Results
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          workflow: Test
+          run_id: ${{ github.event.workflow_run.id }}
+          name: test-results-net9.0
+          path: ./TestResults/net9.0
+
+      - name: Download .NET 8.0 Test Results
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          workflow: Test
+          run_id: ${{ github.event.workflow_run.id }}
+          name: test-results-net8.0
+          path: ./TestResults/net8.0
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: List Downloaded Files
+        run: |
+          echo "📂 Listing all downloaded artifact files..."
+          ls -R ./TestResults || echo "⚠️ No TestResults directory found"
+
       - name: Generate Combined Test Report
         uses: dorny/test-reporter@v1
         with:
@@ -18,7 +44,6 @@ jobs:
             test-results-net9.0
             test-results-net8.0
           name: Unit Tests (.NET 8 & 9)
-          # only consider trx files; placeholders will be ignored
           path: '**/*.trx'
           reporter: dotnet-trx
           fail-on-error: false
