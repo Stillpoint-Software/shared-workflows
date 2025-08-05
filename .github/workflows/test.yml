@@ -33,9 +33,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GH_TOKEN || github.token }}
-          fetch-depth: 0  
+          fetch-depth: 0
 
-      - name: Setup .NET
+      - name: Setup .NET SDKs
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: |
@@ -54,13 +54,23 @@ jobs:
           found=false
           for proj in $(find . -name "*.Tests.csproj"); do
             found=true
+            echo "Inspecting $proj for target frameworks..."
+
             frameworks=$(grep -oPm1 "(?<=<TargetFrameworks>)[^<]+" "$proj" || true)
             if [ -z "$frameworks" ]; then
               frameworks=$(grep -oPm1 "(?<=<TargetFramework>)[^<]+" "$proj" || true)
             fi
+
+            if [ -z "$frameworks" ]; then
+              echo "⚠️ No TargetFramework found in $proj, skipping..."
+              continue
+            fi
+
             for fw in $(echo $frameworks | tr ';' ' '); do
+              echo "Running tests for $proj ($fw)"
               results_dir="./TestResults/$fw"
               mkdir -p "$results_dir"
+
               dotnet test "$proj" \
                 --no-build \
                 --configuration ${{ env.BUILD_CONFIGURATION }} \
@@ -69,25 +79,36 @@ jobs:
                 --results-directory "$results_dir"
             done
           done
+
           if [ "$found" = false ]; then
-            echo "⚠️ No test projects (*.Tests.csproj) found."
+            echo "⚠️ No test projects (*.Tests.csproj) were found in this repository."
             exit 1
+          fi
+
+      - name: Ensure .NET 9.0 results exist
+        run: |
+          mkdir -p ./TestResults/net9.0
+          if ! compgen -G "./TestResults/net9.0/*.trx" > /dev/null; then
+            echo "No .NET 9.0 test results" > ./TestResults/net9.0/placeholder.txt
           fi
 
       - name: Upload .NET 9.0 Test Results
         uses: actions/upload-artifact@v4
-        if: success() || failure()
         with:
           name: test-results-net9.0
-          path: ./TestResults/net9.0/**/*.trx
+          path: ./TestResults/net9.0/**
           overwrite: true
-          if-no-files-found: ignore
+
+      - name: Ensure .NET 8.0 results exist
+        run: |
+          mkdir -p ./TestResults/net8.0
+          if ! compgen -G "./TestResults/net8.0/*.trx" > /dev/null; then
+            echo "No .NET 8.0 test results" > ./TestResults/net8.0/placeholder.txt
+          fi
 
       - name: Upload .NET 8.0 Test Results
         uses: actions/upload-artifact@v4
-        if: success() || failure()
         with:
           name: test-results-net8.0
-          path: ./TestResults/net8.0/**/*.trx
+          path: ./TestResults/net8.0/**
           overwrite: true
-          if-no-files-found: ignore
