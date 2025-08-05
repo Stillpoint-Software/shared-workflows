@@ -60,8 +60,22 @@ jobs:
           mkdir -p TestResults
           found=false
           for proj in $(find . -name "*.Tests.csproj"); do
-            for fw in net9.0 net8.0; do
-              found=true
+            found=true
+            echo "Inspecting $proj for target frameworks..."
+      
+            # Get target frameworks from the csproj
+            frameworks=$(grep -oPm1 "(?<=<TargetFrameworks>)[^<]+" "$proj" || true)
+            if [ -z "$frameworks" ]; then
+              frameworks=$(grep -oPm1 "(?<=<TargetFramework>)[^<]+" "$proj" || true)
+            fi
+      
+            if [ -z "$frameworks" ]; then
+              echo "⚠️ No TargetFramework found in $proj, skipping..."
+              continue
+            fi
+      
+            # Split on ';' in case of multi-targeting
+            for fw in $(echo $frameworks | tr ';' ' '); do
               echo "Running tests for $proj ($fw)"
               dotnet test "$proj" \
                 --no-build \
@@ -71,11 +85,11 @@ jobs:
                 --results-directory ./TestResults
             done
           done
-      
-          if [ "$found" = false ]; then
-            echo "⚠️ No test projects (*.Tests.csproj) were found in this repository."
-            exit 1
-          fi
+
+    if [ "$found" = false ]; then
+      echo "⚠️ No test projects (*.Tests.csproj) were found in this repository."
+      exit 1
+    fi
 
       - name: Upload Test Results
         uses: actions/upload-artifact@v4
