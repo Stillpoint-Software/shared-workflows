@@ -12,12 +12,6 @@ on:
       GH_TOKEN:
         description: "GitHub token with write permissions"
         required: false
-        
-permissions:
-  contents: read 
-  actions: read   
-  checks: write  
-  pull-requests: read
 
 jobs:
   format:
