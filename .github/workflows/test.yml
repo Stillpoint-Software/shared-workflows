@@ -86,10 +86,10 @@ jobs:
             done
           done
 
-    if [ "$found" = false ]; then
-      echo "⚠️ No test projects (*.Tests.csproj) were found in this repository."
-      exit 1
-    fi
+          if [ "$found" = false ]; then
+            echo "⚠️ No test projects (*.Tests.csproj) were found in this repository."
+            exit 1
+          fi
 
       - name: Upload Test Results
         uses: actions/upload-artifact@v4
