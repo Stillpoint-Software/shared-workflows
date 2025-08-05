@@ -64,8 +64,8 @@ Add a repository variable for the solution file:
 1. Go to Respository Settings
 2. Go to Actions → Variables
 3. Enter the following:
-  Key: SOLUTION_NAME
-  Value: MyProject.sln
+  - Key: SOLUTION_NAME
+  - Value: MyProject.sln
 
 **Consumer Usage**
 ```yaml
