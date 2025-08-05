@@ -102,10 +102,10 @@ jobs:
           overwrite: true
 
   report:
-    runs-on: ubuntu-latest
-    needs: test
-    
-    steps:
+      runs-on: ubuntu-latest
+      needs: test
+
+      steps:
       - name: Download .NET 9.0 Test Results
         uses: actions/download-artifact@v4
         with:
@@ -124,18 +124,28 @@ jobs:
           fetch-depth: 0
 
       - name: Generate Test Report (.NET 9.0)
-        uses: dorny/test-reporter@v1
         if: success() || failure()
-        with:
-          name: Test Results (.NET 9.0)
-          path: ./TestResults/net9.0/**/*.trx
-          reporter: dotnet-trx
+        run: |
+          if compgen -G "./TestResults/net9.0/**/*.trx" > /dev/null; then
+            echo "Running test report for .NET 9.0"
+            npx --yes dorny/test-reporter@v1 \
+              --name "Test Results (.NET 9.0)" \
+              --path "./TestResults/net9.0/**/*.trx" \
+              --reporter dotnet-trx
+          else
+            echo "⚠️ No .NET 9.0 test results found, skipping."
+          fi
 
       - name: Generate Test Report (.NET 8.0)
-        uses: dorny/test-reporter@v1
         if: success() || failure()
-        with:
-          name: Test Results (.NET 8.0)
-          path: ./TestResults/net8.0/**/*.trx
-          reporter: dotnet-trx
+        run: |
+          if compgen -G "./TestResults/net8.0/**/*.trx" > /dev/null; then
+            echo "Running test report for .NET 8.0"
+            npx --yes dorny/test-reporter@v1 \
+              --name "Test Results (.NET 8.0)" \
+              --path "./TestResults/net8.0/**/*.trx" \
+              --reporter dotnet-trx
+          else
+            echo "⚠️ No .NET 8.0 test results found, skipping."
+          fi
 
