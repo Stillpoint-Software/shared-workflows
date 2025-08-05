@@ -3,11 +3,6 @@ name: Test
 on:
   workflow_call:
     inputs:
-      dotnet_version:
-        description: "The .NET SDK version to use"
-        required: false
-        default: "9.0.x"
-        type: string
       solution_name:
         description: "Solution file to build and test"
         required: true
@@ -47,7 +42,9 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+           dotnet-version: |
+              9.0.x
+              8.0.x
 
       - name: Restore Dependencies
         run: dotnet restore ${{ env.SOLUTION_NAME }}
@@ -62,27 +59,30 @@ jobs:
           for proj in $(find . -name "*.Tests.csproj"); do
             found=true
             echo "Inspecting $proj for target frameworks..."
-      
-            # Get target frameworks from the csproj
+
+            # Get frameworks
             frameworks=$(grep -oPm1 "(?<=<TargetFrameworks>)[^<]+" "$proj" || true)
             if [ -z "$frameworks" ]; then
               frameworks=$(grep -oPm1 "(?<=<TargetFramework>)[^<]+" "$proj" || true)
             fi
-      
+
             if [ -z "$frameworks" ]; then
               echo "⚠️ No TargetFramework found in $proj, skipping..."
               continue
             fi
-      
-            # Split on ';' in case of multi-targeting
+
+            # Run once per framework
             for fw in $(echo $frameworks | tr ';' ' '); do
               echo "Running tests for $proj ($fw)"
+              results_dir="./TestResults/$fw"
+              mkdir -p "$results_dir"
+
               dotnet test "$proj" \
                 --no-build \
                 --configuration ${{ env.BUILD_CONFIGURATION }} \
                 --framework $fw \
                 --logger "trx;LogFileName=$(basename $proj)-$fw.trx" \
-                --results-directory ./TestResults
+                --results-directory "$results_dir"
             done
           done
 
@@ -91,9 +91,16 @@ jobs:
             exit 1
           fi
 
-      - name: Upload Test Results
+      - name: Upload .NET 9.0 Test Results
         uses: actions/upload-artifact@v4
         if: success() || failure()
         with:
-          name: test-results
-          path: ./TestResults/**/*.trx
+          name: test-results-net9.0
+          path: ./TestResults/net9.0/**/*.trx
+
+      - name: Upload .NET 8.0 Test Results
+        uses: actions/upload-artifact@v4
+        if: success() || failure()
+        with:
+          name: test-results-net8.0
+          path: ./TestResults/net8.0/**/*.trx
