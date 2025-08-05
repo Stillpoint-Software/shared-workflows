@@ -1,5 +1,4 @@
-# .github/workflows/Template_Update.yml
-name: Template_Update
+name: Template Update
 
 permissions:
   contents: write
