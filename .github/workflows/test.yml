@@ -55,6 +55,7 @@ jobs:
       - name: Run Tests
         run: |
           dotnet test --no-build --configuration ${{ env.BUILD_CONFIGURATION }} \
+            --framework net9.0 \
             --logger:trx --results-directory:./TestResults \
             ${{ env.SOLUTION_NAME }}
 
