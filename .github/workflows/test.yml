@@ -1,0 +1,65 @@
+name: Test
+
+on:
+  workflow_call:
+    inputs:
+      dotnet_version:
+        description: "The .NET SDK version to use"
+        required: false
+        default: "9.0.x"
+        type: string
+      solution_name:
+        description: "Solution file to build and test"
+        required: true
+        type: string
+    secrets:
+      GH_TOKEN:
+        description: "GitHub token with write permissions"
+        required: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    env:
+      DOTNET_VERSION: ${{ inputs.dotnet_version }}
+      SOLUTION_NAME: ${{ inputs.solution_name }}
+      BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+
+    steps:
+      - name: Set Build Configuration (Release if main)
+        run: |
+          if [ "${{ env.BRANCH_NAME }}" = "main" ]; then
+            echo "BUILD_CONFIGURATION=Release" >> $GITHUB_ENV
+          else
+            echo "BUILD_CONFIGURATION=Debug" >> $GITHUB_ENV
+          fi
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_TOKEN || github.token }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore Dependencies
+        run: dotnet restore ${{ env.SOLUTION_NAME }}
+
+      - name: Build
+        run: dotnet build --no-restore --configuration ${{ env.BUILD_CONFIGURATION }} ${{ env.SOLUTION_NAME }}
+
+      - name: Run Tests
+        run: |
+          dotnet test --no-build --configuration ${{ env.BUILD_CONFIGURATION }} \
+            --logger:trx --results-directory:./TestResults \
+            ${{ env.SOLUTION_NAME }}
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: success() || failure()
+        with:
+          name: test-results
+          path: ./TestResults/**/*.trx
