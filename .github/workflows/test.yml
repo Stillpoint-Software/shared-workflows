@@ -20,6 +20,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dotnet_version: [ '9.0.x', '8.0.x' ]
 
     env:
       DOTNET_VERSION: ${{ inputs.dotnet_version }}
