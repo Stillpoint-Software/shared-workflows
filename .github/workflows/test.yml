@@ -25,6 +25,10 @@ jobs:
       BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
 
     steps:
+      - name: Set Date Stamp
+        id: date
+        run: echo "date_stamp=$(date -u +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_OUTPUT
+      
       - name: Set Build Configuration (Release if main)
         run: |
           if [ "${{ env.BRANCH_NAME }}" = "main" ]; then
@@ -95,12 +99,12 @@ jobs:
         uses: actions/upload-artifact@v4
         if: success() || failure()
         with:
-          name: test-results-net9.0-${{ env.date_stamp }}
+          name: test-results-net9.0-${{ steps.date.outputs.date_stamp }}
           path: ./TestResults/net9.0/**/*.trx
 
       - name: Upload .NET 8.0 Test Results
         uses: actions/upload-artifact@v4
         if: success() || failure()
         with:
-          name: test-results-net8.0-${{ env.date_stamp }}
+          name: test-results-net8.0-${{ steps.date.outputs.date_stamp }}
           path: ./TestResults/net8.0/**/*.trx
