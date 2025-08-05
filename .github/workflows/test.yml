@@ -16,7 +16,12 @@ on:
       GH_TOKEN:
         description: "GitHub token with write permissions"
         required: false
-
+permissions:
+  contents: read   # allow cloning code
+  actions: read    # allow workflow context
+  checks: write    # if you upload test results
+  pull-requests: read
+  
 jobs:
   test:
     runs-on: ubuntu-latest
