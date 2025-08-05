@@ -112,16 +112,27 @@ jobs:
     needs: test
     
     steps:
-      - name: Download Test Results
+      - name: Download .NET 9.0 Test Results
         uses: actions/download-artifact@v4
         with:
-          name: test-results
-          path: ./TestResults
-    
+          name: test-results-net9.0
+          path: ./TestResults/net9.0
+
+      - name: Download .NET 8.0 Test Results
+        uses: actions/download-artifact@v4
+        with:
+          name: test-results-net8.0
+          path: ./TestResults/net8.0
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Generate Test Report
         uses: dorny/test-reporter@v1
         if: success() || failure()
         with:
-          name: Test Results
+          name: Test Results (.NET 8 & 9)
           path: ./TestResults/**/*.trx
           reporter: dotnet-trx
