@@ -12,16 +12,18 @@ jobs:
 
     steps:
       - name: Download .NET 9.0 Test Results
-        continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: dawidd6/action-download-artifact@v2
         with:
+          workflow: Test
+          run_id: ${{ github.event.workflow_run.id }}
           name: test-results-net9.0
           path: ./TestResults/net9.0
 
       - name: Download .NET 8.0 Test Results
-        continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: dawidd6/action-download-artifact@v2
         with:
+          workflow: Test
+          run_id: ${{ github.event.workflow_run.id }}
           name: test-results-net8.0
           path: ./TestResults/net8.0
 
@@ -31,7 +33,6 @@ jobs:
           fetch-depth: 0
 
       - name: Generate Test Report (.NET 9.0)
-        if: success() || failure()
         run: |
           echo "Checking for .NET 9.0 test results..."
           ls -R ./TestResults/net9.0 || true
@@ -41,11 +42,10 @@ jobs:
               --path "./TestResults/net9.0/*.trx" \
               --reporter dotnet-trx
           else
-            echo "⚠️ No .NET 9.0 test results found, skipping."
+            echo "⚠️ No .NET 9.0 test results found (placeholder only)."
           fi
 
       - name: Generate Test Report (.NET 8.0)
-        if: success() || failure()
         run: |
           echo "Checking for .NET 8.0 test results..."
           ls -R ./TestResults/net8.0 || true
@@ -55,5 +55,5 @@ jobs:
               --path "./TestResults/net8.0/*.trx" \
               --reporter dotnet-trx
           else
-            echo "⚠️ No .NET 8.0 test results found, skipping."
+            echo "⚠️ No .NET 8.0 test results found (placeholder only)."
           fi
