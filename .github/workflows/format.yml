@@ -1,0 +1,40 @@
+name: Format
+
+on:
+  workflow_call:
+    inputs:
+      dotnet_version:
+        description: "The .NET SDK version to use"
+        required: false
+        default: "9.0.x"
+        type: string
+    secrets:
+      GH_TOKEN:
+        description: "GitHub token with write permissions"
+        required: false
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_TOKEN || github.token }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet_version }}
+
+      - name: Format Code
+        run: dotnet format
+
+      - name: Commit & Push Updated Styles
+        if: always()
+        continue-on-error: true
+        run: |
+          git config --global user.name 'github-actions'
+          git config --global user.email 'github-actions@github.com'
+          git diff --quiet || (git commit -am "chore: format code with dotnet format" && git push)
