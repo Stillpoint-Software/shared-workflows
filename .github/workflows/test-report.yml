@@ -19,11 +19,6 @@ on:
         default: "*.trx"
         type: string
 
-permissions:
-  contents: read
-  actions: read
-  checks: write
-
 jobs:
   report:
     runs-on: ubuntu-latest
