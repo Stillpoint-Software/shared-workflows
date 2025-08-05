@@ -85,23 +85,35 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare .NET 9.0 Results Folder
+        run: |
+          mkdir -p ./TestResults/net9.0
+          if ! compgen -G "./TestResults/net9.0/*.trx" > /dev/null; then
+            echo "No .NET 9.0 test results" > ./TestResults/net9.0/placeholder.txt
+          fi
+
       - name: Upload .NET 9.0 Test Results
         uses: actions/upload-artifact@v4
         if: success() || failure()
         with:
           name: test-results-net9.0
-          path: ./TestResults/net9.0/**/*.trx
+          path: ./TestResults/net9.0/**
           overwrite: true
-          if-no-files-found: ignore
-      
+
+      - name: Prepare .NET 8.0 Results Folder
+        run: |
+          mkdir -p ./TestResults/net8.0
+          if ! compgen -G "./TestResults/net8.0/*.trx" > /dev/null; then
+            echo "No .NET 8.0 test results" > ./TestResults/net8.0/placeholder.txt
+          fi
+
       - name: Upload .NET 8.0 Test Results
         uses: actions/upload-artifact@v4
         if: success() || failure()
         with:
           name: test-results-net8.0
-          path: ./TestResults/net8.0/**/*.trx
+          path: ./TestResults/net8.0/**
           overwrite: true
-          if-no-files-found: ignore
 
   report:
     runs-on: ubuntu-latest
@@ -130,11 +142,13 @@ jobs:
       - name: Generate Test Report (.NET 9.0)
         if: success() || failure()
         run: |
-          if compgen -G "./TestResults/net9.0/**/*.trx" > /dev/null; then
+          echo "Checking for .NET 9.0 test results..."
+          ls -R ./TestResults/net9.0 || true
+          if compgen -G "./TestResults/net9.0/*.trx" > /dev/null; then
             echo "Running test report for .NET 9.0"
             npx --yes dorny/test-reporter@v1 \
               --name "Test Results (.NET 9.0)" \
-              --path "./TestResults/net9.0/**/*.trx" \
+              --path "./TestResults/net9.0/*.trx" \
               --reporter dotnet-trx
           else
             echo "⚠️ No .NET 9.0 test results found, skipping."
@@ -143,11 +157,13 @@ jobs:
       - name: Generate Test Report (.NET 8.0)
         if: success() || failure()
         run: |
-          if compgen -G "./TestResults/net8.0/**/*.trx" > /dev/null; then
+          echo "Checking for .NET 8.0 test results..."
+          ls -R ./TestResults/net8.0 || true
+          if compgen -G "./TestResults/net8.0/*.trx" > /dev/null; then
             echo "Running test report for .NET 8.0"
             npx --yes dorny/test-reporter@v1 \
               --name "Test Results (.NET 8.0)" \
-              --path "./TestResults/net8.0/**/*.trx" \
+              --path "./TestResults/net8.0/*.trx" \
               --reporter dotnet-trx
           else
             echo "⚠️ No .NET 8.0 test results found, skipping."
