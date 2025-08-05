@@ -95,12 +95,12 @@ jobs:
         uses: actions/upload-artifact@v4
         if: success() || failure()
         with:
-          name: test-results-net9.0
+          name: test-results-net9.0-${{ env.date_stamp }}
           path: ./TestResults/net9.0/**/*.trx
 
       - name: Upload .NET 8.0 Test Results
         uses: actions/upload-artifact@v4
         if: success() || failure()
         with:
-          name: test-results-net8.0
+          name: test-results-net8.0-${{ env.date_stamp }}
           path: ./TestResults/net8.0/**/*.trx
