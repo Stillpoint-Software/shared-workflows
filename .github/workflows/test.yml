@@ -57,13 +57,16 @@ jobs:
           mkdir -p TestResults
           found=false
           for proj in $(find . -name "*.Tests.csproj"); do
-            found=true
-            echo "Running tests for $proj"
-            dotnet test "$proj" \
-              --no-build \
-              --configuration ${{ env.BUILD_CONFIGURATION }} \
-              --logger "trx;LogFileName=$(basename $proj).trx" \
-              --results-directory ./TestResults
+            for fw in net9.0 net8.0; do
+              found=true
+              echo "Running tests for $proj ($fw)"
+              dotnet test "$proj" \
+                --no-build \
+                --configuration ${{ env.BUILD_CONFIGURATION }} \
+                --framework $fw \
+                --logger "trx;LogFileName=$(basename $proj)-$fw.trx" \
+                --results-directory ./TestResults
+            done
           done
       
           if [ "$found" = false ]; then
