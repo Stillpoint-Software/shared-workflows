@@ -54,10 +54,23 @@ jobs:
 
       - name: Run Tests
         run: |
-          dotnet test --no-build --configuration ${{ env.BUILD_CONFIGURATION }} \
-            --framework net9.0 \
-            --logger:trx --results-directory:./TestResults \
-            ${{ env.SOLUTION_NAME }}
+          mkdir -p TestResults
+          found=false
+          for proj in $(find . -name "*.Tests.csproj"); do
+            found=true
+            echo "Running tests for $proj"
+            dotnet test "$proj" \
+              --no-build \
+              --configuration ${{ env.BUILD_CONFIGURATION }} \
+              --framework net9.0 \
+              --logger "trx;LogFileName=$(basename $proj).trx" \
+              --results-directory ./TestResults
+          done
+          
+          if [ "$found" = false ]; then
+            echo "⚠️ No test projects (*.Tests.csproj) were found in this repository."
+            exit 1
+          fi
 
       - name: Upload Test Results
         uses: actions/upload-artifact@v4
