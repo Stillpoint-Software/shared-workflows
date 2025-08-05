@@ -1,4 +1,4 @@
-name: Test
+name: Test and Report
 
 on:
   workflow_call:
@@ -11,16 +11,12 @@ on:
       GH_TOKEN:
         description: "GitHub token with write permissions"
         required: false
- 
+
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        dotnet_version: [ '9.0.x', '8.0.x' ]
 
     env:
-      DOTNET_VERSION: ${{ inputs.dotnet_version }}
       SOLUTION_NAME: ${{ inputs.solution_name }}
       BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
 
@@ -42,9 +38,9 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-           dotnet-version: |
-              9.0.x
-              8.0.x
+          dotnet-version: |
+            9.0.x
+            8.0.x
 
       - name: Restore Dependencies
         run: dotnet restore ${{ env.SOLUTION_NAME }}
@@ -60,7 +56,6 @@ jobs:
             found=true
             echo "Inspecting $proj for target frameworks..."
 
-            # Get frameworks
             frameworks=$(grep -oPm1 "(?<=<TargetFrameworks>)[^<]+" "$proj" || true)
             if [ -z "$frameworks" ]; then
               frameworks=$(grep -oPm1 "(?<=<TargetFramework>)[^<]+" "$proj" || true)
@@ -71,7 +66,6 @@ jobs:
               continue
             fi
 
-            # Run once per framework
             for fw in $(echo $frameworks | tr ';' ' '); do
               echo "Running tests for $proj ($fw)"
               results_dir="./TestResults/$fw"
@@ -98,7 +92,7 @@ jobs:
           name: test-results-net9.0
           path: ./TestResults/net9.0/**/*.trx
           overwrite: true
-      
+
       - name: Upload .NET 8.0 Test Results
         uses: actions/upload-artifact@v4
         if: success() || failure()
@@ -129,10 +123,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Generate Test Report
+      - name: Generate Test Report (.NET 9.0)
         uses: dorny/test-reporter@v1
         if: success() || failure()
         with:
-          name: Test Results (.NET 8 & 9)
-          path: ./TestResults/**/*.trx
+          name: Test Results (.NET 9.0)
+          path: ./TestResults/net9.0/**/*.trx
           reporter: dotnet-trx
+
+      - name: Generate Test Report (.NET 8.0)
+        uses: dorny/test-reporter@v1
+        if: success() || failure()
+        with:
+          name: Test Results (.NET 8.0)
+          path: ./TestResults/net8.0/**/*.trx
+          reporter: dotnet-trx
+
