@@ -113,4 +113,3 @@ jobs:
 
       - name: 💾 Save notes to file
         run: echo "${{ steps.changelog.outputs.changelog }}" > release-notes.md
-…
