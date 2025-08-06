@@ -92,25 +92,25 @@ jobs:
           echo "tag=$(nbgv get-version -v GitTagName)"  >> "$GITHUB_OUTPUT"
           echo "semver=$(nbgv get-version -v SemVer2)"  >> "$GITHUB_OUTPUT"
 
-      # 8️⃣  Build & upload release-notes.md
+      # 8️⃣  Decide whether we have any tags yet  🆕
+      - name: 🕵️ Detect previous tag
+        id: tagcheck
+        run: |
+          if git tag --list | grep -q . ; then
+            echo "commit_mode=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "commit_mode=true"  >> "$GITHUB_OUTPUT"
+          fi
+
+      # 9️⃣  Build & upload release-notes.md  (uses commitMode flag)
       - name: 📝 Generate release notes
         id: changelog
         uses: mikepenz/release-changelog-builder-action@v5
+        with:
+          commitMode: ${{ steps.tagcheck.outputs.commit_mode }} 
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
 
       - name: 💾 Save notes to file
         run: echo "${{ steps.changelog.outputs.changelog }}" > release-notes.md
-
-      - name: 📚 Commit release-notes.md
-        run: |
-          git config user.name  "release-bot"
-          git config user.email "release-bot@users.noreply.github.com"
-          git add release-notes.md
-          git commit -m "docs: add release notes for ${{ steps.version.outputs.tag }}" || echo "No change"
-
-      - name: 📦 Upload release notes artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release_notes
-          path: release-notes.md
+…
