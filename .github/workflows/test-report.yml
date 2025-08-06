@@ -36,26 +36,25 @@ jobs:
           echo "Listing *.trx we have so far:"
           find . -maxdepth 4 -type f -name '*.trx' -print || true
 
-      - name: ⬇️  Download test artifacts from Test run
+      - uses: actions/download-artifact@v4
         if: ${{ inputs.test_run_id != '' }}
-        uses: actions/download-artifact@v4
         with:
           run-id: ${{ inputs.test_run_id }}
-          # Omit “name:” to pull *all* artifacts from that run,
-          # including test-results-net8.0 and test-results-net9.0
-          path: .          # Save them to the working directory
-          
-      # 📊 Generate combined report (matches both framework artifacts)
-      - name: Publish test report
-        uses: dorny/test-reporter@v1
+          name: |
+            test-results-net8.0
+            test-results-net9.0        # explicit names are okay, multiline is allowed
+          path: .
+      
+      # 2. Reporter keeps the regex (works for both triggers)
+      - uses: dorny/test-reporter@v1
         with:
-          # Regex matches test-results-net8.0  and  test-results-net9.0
           artifact: /test-results-net[89]\.0/
           name: "Unit Tests (.NET 8 & 9)"
-          path: '**/*.trx'            # look inside both artifact zips
+          path: '**/*.trx'
           reporter: dotnet-trx
           fail-on-error: false
           fail-on-empty: false
           list-suites: all
           list-tests: all
+          max-annotations: 10
           max-annotations: 10
