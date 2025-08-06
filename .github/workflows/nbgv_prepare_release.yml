@@ -8,14 +8,12 @@ on:
         type: string
         default: main
         required: true
-
-      increment:                     # major | minor | patch (patch → revision later)
+      increment:                   
         description: "Version increment"
         type: string
         default: patch
         required: true
-
-      version_file_path:             # path relative to repo root
+      version_file_path:          
         description: "Path to version.json"
         type: string
         default: version.json
@@ -25,7 +23,6 @@ on:
       GH_TOKEN:
         description: "GitHub token (falls back to github.token)"
         required: false
-
     outputs:                   
       tag_name:
         description: "Git tag from Nerdbank"
@@ -44,7 +41,6 @@ jobs:
       semver:         ${{ steps.version.outputs.semver }}
 
     steps:
-      # 1️⃣  Checkout the target branch / tag
       - name: 📥 Checkout target
         uses: actions/checkout@v4
         with:
@@ -52,17 +48,11 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GH_TOKEN || github.token }}
 
-      # 2️⃣  Install .NET SDK (for the nbgv tool)
       - name: ⚙️ Setup .NET 9.x
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
 
-      # 3️⃣  Ensure version.json exists at the given path
-      - name: 🔍 Ensure version.json exists
-        run: test -f "${{ inputs.version_file_path }}"
-
-      # 4️⃣  Map "patch" -> "revision" (CLI nomenclature)
       - name: 🔄 Map patch → revision
         id: map
         run: |
@@ -70,11 +60,9 @@ jobs:
           [ "$INC" = "patch" ] && INC=revision
           echo "inc=$INC" >> "$GITHUB_OUTPUT"
 
-      # 5️⃣  Install the NBGV CLI
       - name: 🔧 Install NBGV CLI
         run: dotnet tool install -g nbgv --version 3.8.38-alpha
 
-      # 6️⃣  Prepare the release branch with an explicit patch bump
       - name: 🛠️  Prepare release branch
         id: prep_release
         run: |
@@ -102,14 +90,12 @@ jobs:
           # 4) Expose the branch name for downstream jobs
           echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
 
-      # 7️⃣  Resolve the exact tag & SemVer2
       - name: 🔖 Resolve tag & SemVer
         id: version
         run: |
           echo "tag=$(nbgv get-version -v GitTagName)"  >> "$GITHUB_OUTPUT"
           echo "semver=$(nbgv get-version -v SemVer2)"  >> "$GITHUB_OUTPUT"
 
-      # 8️⃣  Create & push a bootstrap tag the very first time
       - name: 🏷️  Bootstrap first tag when repo is tag-less
         run: |
           if ! git tag --list | grep -q . ; then
@@ -119,7 +105,6 @@ jobs:
             git push origin 0.0.0
           fi
 
-      # 9️⃣  Generate release notes (normal tag-diff mode)
       - name: 📝 Generate release notes
         id: changelog
         uses: mikepenz/release-changelog-builder-action@v5
