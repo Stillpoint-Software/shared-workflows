@@ -2,9 +2,15 @@ name: Test Report
 
 on:
   workflow_call:
-    workflows: ["Test"]
-    types: [completed]
-    branches: [main, develop]          
+    inputs:
+      test_run_id:
+        description: "Run ID of the completed Test workflow"
+        required: false
+        type: string
+      branch:
+        description: "Branch Test was run on"
+        required: false
+        type: string       
         
 permissions:
   contents: read
@@ -21,11 +27,6 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: 🐞 Debug run-ID
-        run: |
-          echo "inputs.test_run_id = ${{ inputs.test_run_id }}"
-          echo "github.repository  = ${{ github.repository }}"
-
       - name: ⬇️  Download ALL artifacts from Test run
         if: ${{ inputs.test_run_id != '' }}        # manual runs only
         uses: actions/download-artifact@v4
@@ -33,6 +34,7 @@ jobs:
             repository:   ${{ github.repository }} 
             run-id:       ${{ inputs.test_run_id }}
             path:         .
+            github-token: ${{ secrets.GITHUB_TOKEN || github.token }}
       
       - uses: dorny/test-reporter@v1
         with:
