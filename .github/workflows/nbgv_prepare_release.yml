@@ -40,8 +40,8 @@ jobs:
 
     outputs:
       release_branch: ${{ steps.nbgv.outputs.BranchName }}
-      tag:    ${{ steps.nbgv.outputs.tag }}
-      semver: ${{ steps.nbgv.outputs.semver }}
+      tag:            ${{ steps.version.outputs.tag }}   
+      semver:         ${{ steps.version.outputs.semver }}  
 
     steps:
       # 1️⃣  Checkout the target branch / tag
@@ -75,46 +75,33 @@ jobs:
         id: nbgv
         uses: dotnet/nbgv@v0.4.2
         with:
-          toolVersion:      3.8.38-alpha    
-          versionIncrement: revision         
-          firstUnstableTag: dev               
-          versionFile:      version.json
+          toolVersion:      3.8.38-alpha
+          versionIncrement: ${{ steps.map.outputs.inc }}     # ← dynamic now
+          firstUnstableTag: dev
+          versionFile:      ${{ inputs.version_file_path }}
           setCommonVars:    true
 
+      # 6️⃣  Install CLI once so we can query it
       - name: 🔧 Install NBGV CLI
         run: dotnet tool install -g nbgv --version 3.8.38-alpha
 
+      # 7️⃣  Resolve the exact tag & SemVer2
       - name: 🔖 Resolve tag & SemVer
         id: version
         run: |
-          TAG=$(dotnet nbgv get-version -v GitTagName)
-          SEMVER=$(dotnet nbgv get-version -v SemVer2)
-          echo "tag=$TAG"    >> "$GITHUB_OUTPUT"
-          echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
-          
-       # 6️⃣  Resolve the *exact* tag & SemVer2 produced by Nerdbank
-      - name: 🔖 Resolve tag & SemVer
-        id: version
-        run: |
-          TAG=$(dotnet nbgv get-version -v GitTagName)
-          SEMVER=$(dotnet nbgv get-version -v SemVer2)
-          echo "tag=$TAG"    >> "$GITHUB_OUTPUT"
-          echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
-          
-      # 7️⃣  Build & upload release-notes.md
+          echo "tag=$(dotnet nbgv get-version -v GitTagName)" >> "$GITHUB_OUTPUT"
+          echo "semver=$(dotnet nbgv get-version -v SemVer2)" >> "$GITHUB_OUTPUT"
+
+      # 8️⃣  Build & upload release-notes.md
       - name: 📝 Generate release notes
         id: changelog
         uses: mikepenz/release-changelog-builder-action@v5
-        #with:
-          # If you have a custom grouping template, point to it here.
-          # configuration: .github/release-notes-config.json
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
 
       - name: 💾 Save notes to file
         run: echo "${{ steps.changelog.outputs.changelog }}" > release-notes.md
 
-      # Commit the notes to the release branch
       - name: 📚 Commit release-notes.md
         run: |
           git config user.name  "release-bot"
@@ -125,5 +112,5 @@ jobs:
       - name: 📦 Upload release notes artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release_notes         
+          name: release_notes
           path: release-notes.md
