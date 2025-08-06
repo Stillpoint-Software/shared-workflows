@@ -11,6 +11,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+     # 🔍 Sanity-check: list everything the action just downloaded
+      - name: Show downloaded artifact contents
+        run: ls -R
+        
       - name: Download .NET 9.0 Test Results
         uses: dawidd6/action-download-artifact@v2
         with:
