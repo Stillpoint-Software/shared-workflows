@@ -83,9 +83,7 @@ jobs:
             TAG_ARG="dev"   # or whatever prerelease you want
           fi
 
-          nbgv prepare-release $TAG_ARG \
-               --versionIncrement ${{ steps.map.outputs.inc }} \
-               -p .
+          nbgv prepare-release $TAG_ARG -p .
 
           echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
 
