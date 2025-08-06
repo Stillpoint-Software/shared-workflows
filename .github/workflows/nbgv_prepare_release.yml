@@ -57,7 +57,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
+
       - name: 🔄 Map patch → revision
         id: map
         run: |
@@ -73,27 +73,28 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Determine a prerelease tag only for non-main branches
           TAG_ARG=""
           if [[ "${{ inputs.target_branch }}" != "main" && "${{ inputs.target_branch }}" != "master" ]]; then
             TAG_ARG="dev"
           fi
 
-          # 1) Read the current SemVer2 (e.g. "1.0.0")  
           CURRENT=$(nbgv get-version -v SemVer2)
 
-          # 2) Split and bump the patch segment
           IFS='.' read -r MAJ MIN PATCH <<< "$CURRENT"
           NEXT="$MAJ.$MIN.$((PATCH + 1))"
           echo "Calculated next version: $NEXT"
 
-          # 3) Call prepare-release with --nextVersion
           nbgv prepare-release $TAG_ARG \
                  --nextVersion "$NEXT" \
-                 -p .
+                 -p "${{ inputs.version_file_path }}"
 
-          # 4) Expose the branch name for downstream jobs
-          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
+          git add "${{ inputs.version_file_path }}"
+          git commit -m "chore: bump version to $NEXT"
+
+          BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          git push --set-upstream origin "$BRANCH"
+
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 
       - name: 🔖 Resolve tag & SemVer
         id: version
