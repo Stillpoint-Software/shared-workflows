@@ -78,12 +78,18 @@ jobs:
       - name: 🛠️  Prepare release branch
         id: prep_release
         run: |
-          nbgv prepare-release \
-               --versionIncrement ${{ steps.map.outputs.inc }} \
-               --firstUnstableTag dev \
-               --versionFile      "${{ inputs.version_file_path }}"
+          # Determine prerelease tag only for non-main branches
+          TAG_ARG=""
+          if [[ "${{ inputs.target_branch }}" != "main" && "${{ inputs.target_branch }}" != "master" ]]; then
+            TAG_ARG="dev"                  
+          fi
 
-          # expose the branch name for the Pack workflow
+          # Path that contains version.json (repo root here)
+          nbgv prepare-release $TAG_ARG \
+               --versionIncrement ${{ steps.map.outputs.inc }} \
+               -p .
+
+          # expose the new branch name for downstream jobs
           echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
 
       # 7️⃣  Resolve the exact tag & SemVer2
