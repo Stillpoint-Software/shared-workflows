@@ -58,53 +58,6 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: 🔄 Map patch → revision
-        id: map
-        run: |
-          INC="${{ inputs.increment }}"
-          [ "$INC" = "patch" ] && INC=revision
-          echo "inc=$INC" >> "$GITHUB_OUTPUT"
-
-      - name: 🔧 Install NBGV CLI
-        run: dotnet tool install -g nbgv --version 3.8.38-alpha
-
-      - name: 🛠️  Prepare release branch
-        id: prep_release
-        run: |
-          set -euo pipefail
-
-          # 1) Detect prerelease tag only on non-main or master
-           if [[ "${{ inputs.target_branch }}" == "develop" ]]; then
-             # ── Dev flow: bump patch + add "-dev"  
-             nbgv prepare-release dev -p .
-             git push --set-upstream origin "$(git rev-parse --abbrev-ref HEAD)"
-             echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
-             exit 0
-          fi
-
-          # 2) Read current version, bump patch
-           CURRENT=$(nbgv get-version -v SemVer2)
-           IFS='.' read -r MAJ MIN PATCH <<< "$CURRENT"
-           NEXT="$MAJ.$MIN.$((PATCH + 1))"
-           echo "Calculated next version: $NEXT"
-
-          # 3) Call prepare-release (no prerelease tag) and capture JSON output
-          JSON_OUTPUT="$(nbgv prepare-release \
-                --nextVersion "$NEXT" \
-                --format json)"
-           echo "$JSON_OUTPUT"
-
-           # 4) Parse out release branch name
-           RELEASE_BRANCH=$(echo "$JSON_OUTPUT" | jq -r .releaseBranchName)
-           echo "Release branch: $RELEASE_BRANCH"
-
-           # 5) Push the release branch and updated main
-           git push origin "$RELEASE_BRANCH"
-           git push origin "${{ inputs.target_branch }}"
-
-           # 6) Expose for downstream jobs
-           echo "branch=$RELEASE_BRANCH" >> "$GITHUB_OUTPUT"
-
       - name: 🔖 Resolve tag & SemVer
         id: version
         run: |
@@ -120,6 +73,24 @@ jobs:
             git push origin 0.0.0
           fi
 
+      - name: 🛠️ Prepare release
+        id: prep_release
+        run: |
+          set -euo pipefail
+
+          # Let Nerdbank.GitVersioning do the right thing for both flows:
+          #  • On main/master/hotfix/* → patch bump, no "-alpha"  (stable)
+          #  • On develop (or any other ref) → patch bump + "-alpha"
+          nbgv prepare-release
+
+          # Push the branch & tags so the Pack workflow can see them
+          BR=$(git rev-parse --abbrev-ref HEAD)
+          git push --set-upstream origin "$BR"
+          git push origin --tags
+
+          # Expose the branch name for downstream workflows
+          echo "branch=$BR" >> "$GITHUB_OUTPUT"
+          
       - name: 📝 Generate release notes
         id: changelog
         uses: mikepenz/release-changelog-builder-action@v5
