@@ -33,9 +33,10 @@ jobs:
           fetch-depth: 0
           ref: ${{ needs.discover.outputs.head_sha }}
 
-      # Optional: sanity listing of what GitHub auto-downloaded
-      - name: Show downloaded artifacts
-        run: ls -R
+      - name: List work dir before reporter
+        run: |
+          echo "Artifacts present:"
+          find . -maxdepth 3 -type f -name '*.trx' -print
 
       # 📊 Publish report — let the action pull both artifacts
       - name: Generate combined test report
