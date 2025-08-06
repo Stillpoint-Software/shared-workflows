@@ -92,22 +92,20 @@ jobs:
           echo "tag=$(nbgv get-version -v GitTagName)"  >> "$GITHUB_OUTPUT"
           echo "semver=$(nbgv get-version -v SemVer2)"  >> "$GITHUB_OUTPUT"
 
-      # 8️⃣  Create + push a bootstrap tag the very first time
+      # 8️⃣  Create & push a bootstrap tag the very first time
       - name: 🏷️  Bootstrap first tag when repo is tag-less
         run: |
           if ! git tag --list | grep -q . ; then
-            echo "No tags found – creating bootstrap tag 0.0.0"
-            git tag 0.0.0
-            # push just this tag so the changelog action can diff
+            echo "No tags found – creating bootstrap tag 0.0.0 on the root commit"
+            ROOT=$(git rev-list --max-parents=0 HEAD)
+            git tag 0.0.0 "$ROOT"
             git push origin 0.0.0
           fi
 
-      # 9️⃣  Build & upload release-notes.md  (uses commitMode flag)
+      # 9️⃣  Build & upload release-notes.md  (now in normal tag-diff mode)
       - name: 📝 Generate release notes
         id: changelog
         uses: mikepenz/release-changelog-builder-action@v5
-        with:
-          commitMode: ${{ steps.tagcheck.outputs.commit_mode }} 
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
 
