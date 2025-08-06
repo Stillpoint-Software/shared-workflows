@@ -12,39 +12,30 @@ permissions:
   checks: write
 
 jobs:
-  discover:
-    runs-on: ubuntu-latest
-    outputs:
-      head_branch: ${{ steps.meta.outputs.branch }}
-      head_sha:    ${{ steps.meta.outputs.sha }}
-    steps:
-      - id: meta
-        run: |
-          echo "branch=${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_OUTPUT"
-          echo "sha=${{   github.event.workflow_run.head_sha    }}" >> "$GITHUB_OUTPUT"
   report:
-    needs: discover
     runs-on: ubuntu-latest
     steps:
-      # Checkout **the same commit** that the Test job ran on
+      # Optional: checkout the exact commit the Test job ran on
       - name: Checkout code @ tested SHA
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ needs.discover.outputs.head_sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
 
-      # Optional: sanity listing of what GitHub auto-downloaded
-      - name: Show downloaded artifacts
-        run: ls -R
+      # 🔍 Debug – list any .trx files that GitHub auto-downloaded
+      - name: List workspace before reporter
+        run: |
+          echo "Listing *.trx we have so far:"
+          find . -maxdepth 4 -type f -name '*.trx' -print || true
 
-      # 📊 Publish report — let the action pull both artifacts
-      - name: Generate combined test report
+      # 📊 Generate combined report (matches both framework artifacts)
+      - name: Publish test report
         uses: dorny/test-reporter@v1
         with:
-          # regex matches both test-results-net8.0 and test-results-net9.0
+          # Regex matches test-results-net8.0  and  test-results-net9.0
           artifact: /test-results-net[89]\.0/
           name: "Unit Tests (.NET 8 & 9)"
-          path: '**/*.trx'
+          path: '**/*.trx'            # look inside both artifact zips
           reporter: dotnet-trx
           fail-on-error: false
           fail-on-empty: false
