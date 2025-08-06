@@ -5,7 +5,15 @@ on:
     workflows: ["Test"]
     types: [completed]
     branches: [main, develop]          # ← don’t run for misc feature branches
-
+  workflow_call:
+    inputs:
+      test_run_id:
+        required: false
+        type: string
+      branch:
+        required: false
+        type: string
+        
 permissions:
   contents: read
   actions: read        # download upstream artifacts
