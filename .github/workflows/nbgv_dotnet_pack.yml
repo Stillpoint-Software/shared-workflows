@@ -27,6 +27,16 @@ on:
         description: "SemVer2 version string"
         type: string
         required: true
+      prune_after_push:             
+        description: "Delete old package versions after a successful push"
+        type: boolean
+        default: true
+        required: false
+      prune_keep:                   
+        description: "Versions to retain per package"
+        type: number
+        default: 5
+        required: false
         
     secrets:
       NUGET_API_KEY:
@@ -87,3 +97,45 @@ jobs:
             --api-key "$NUGET_API_KEY" \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
+            
+       # 🧹 Prune older versions on nuget.org
+      - name: 🧹 Prune old package versions
+        if: |
+          inputs.push_after_pack == 'true' &&
+          inputs.prune_after_push == 'true'
+        shell: bash
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          KEEP=${{ inputs.prune_keep }}
+
+          echo "Will keep the newest $KEEP version(s) for each pushed package."
+
+          for nupkg in ./artifacts/*.nupkg; do
+            pkgfile=$(basename "$nupkg")
+            id="${pkgfile%%.*}"         # crude but works: Sample.Api.1.2.3.nupkg → Sample
+
+            echo "🔍 Processing $id …"
+
+            # Query nuget flat-container for the full version list
+            all=$(curl -sL "https://api.nuget.org/v3-flatcontainer/${id,,}/index.json" \
+                  | jq -r '.versions[]')
+
+            count=$(echo "$all" | wc -l)
+            if [[ $count -le $KEEP ]]; then
+              echo "  Nothing to prune ($count ≤ $KEEP)."
+              continue
+            fi
+
+            # newest-to-oldest using sort --version-sort
+            to_delete=$(echo "$all" | sort -Vr | tail -n +"$((KEEP+1))")
+
+            while read -r ver; do
+              echo "  🗑️  Deleting $id $ver"
+              dotnet nuget delete "$id" "$ver" \
+                --source https://api.nuget.org/v3/index.json \
+                --non-interactive \
+                --api-key "$NUGET_API_KEY"
+            done <<< "$to_delete"
+          done
