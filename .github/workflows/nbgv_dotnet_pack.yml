@@ -19,11 +19,19 @@ on:
         description: "Whether to include dev prerelease symbols"
         type: boolean
         required: true
+      tag_name:
+        description: "Exact Git tag produced by Nerdbank"
+        type: string
+        required: true
+      semver2:
+        description: "SemVer2 version string"
+        type: string
+        required: true
+        
     secrets:
       NUGET_API_KEY:
         description: "API key for pushing to NuGet.org"
         required: true
-
 jobs:
   pack:
     runs-on: ubuntu-latest
@@ -38,6 +46,11 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "9.0.x"
+          
+      - name: ⬇️ Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release_notes
 
       - name: 🔄 Restore
         run: dotnet restore
