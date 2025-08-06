@@ -73,27 +73,34 @@ jobs:
         run: |
           set -euo pipefail
 
+          # 1) Detect prerelease tag only on non-main
           TAG_ARG=""
           if [[ "${{ inputs.target_branch }}" != "main" && "${{ inputs.target_branch }}" != "master" ]]; then
             TAG_ARG="dev"
           fi
 
+          # 2) Read current version, bump patch
           CURRENT=$(nbgv get-version -v SemVer2)
-
           IFS='.' read -r MAJ MIN PATCH <<< "$CURRENT"
           NEXT="$MAJ.$MIN.$((PATCH + 1))"
           echo "Calculated next version: $NEXT"
 
-          nbgv prepare-release $TAG_ARG \
-                 --nextVersion "$NEXT" \
+          # 3) Call prepare-release and capture JSON output
+          JSON_OUTPUT="$(nbgv prepare-release $TAG_ARG \
+             --nextVersion "$NEXT" \
+             --format json)"
+          echo "$JSON_OUTPUT"
 
-          git add "${{ inputs.version_file_path }}"
-          git commit -m "chore: bump version to $NEXT"
+          # 4) Parse out release branch name
+          RELEASE_BRANCH=$(echo "$JSON_OUTPUT" | jq -r .releaseBranchName)
+          echo "Release branch: $RELEASE_BRANCH"
 
-          BRANCH=$(git rev-parse --abbrev-ref HEAD)
-          git push --set-upstream origin "$BRANCH"
+          # 5) Push the release branch and updated main
+          git push origin "$RELEASE_BRANCH"
+          git push origin "${{ inputs.target_branch }}"
 
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          # 6) Expose for downstream jobs
+          echo "branch=$RELEASE_BRANCH" >> "$GITHUB_OUTPUT"
 
       - name: 🔖 Resolve tag & SemVer
         id: version
