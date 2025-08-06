@@ -11,7 +11,7 @@ on:
       increment:                   
         description: "Version increment"
         type: string
-        default: patch
+        default: hotfix
         required: true
       version_file_path:          
         description: "Path to version.json"
