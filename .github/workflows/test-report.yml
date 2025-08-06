@@ -36,14 +36,14 @@ jobs:
           echo "Listing *.trx we have so far:"
           find . -maxdepth 4 -type f -name '*.trx' -print || true
 
-      - uses: actions/download-artifact@v4
-        if: ${{ inputs.test_run_id != '' }}
+      - name: ⬇️  Download ALL artifacts from Test run
+        if: ${{ inputs.test_run_id != '' }}        # manual runs only
+        uses: actions/download-artifact@v4
         with:
-          run-id: ${{ inputs.test_run_id }}
-          name: |
-            test-results-net8.0
-            test-results-net9.0        # explicit names are okay, multiline is allowed
-          path: .
+            run-id:       ${{ inputs.test_run_id }}
+            path:         .
+            # ⚠️  omit “name:” ⇒ pulls every artifact in that run
+            #     (test-results-net8.0, test-results-net9.0, etc.)
       
       # 2. Reporter keeps the regex (works for both triggers)
       - uses: dorny/test-reporter@v1
