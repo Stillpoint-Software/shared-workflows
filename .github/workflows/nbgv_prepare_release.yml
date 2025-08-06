@@ -92,15 +92,14 @@ jobs:
           echo "tag=$(nbgv get-version -v GitTagName)"  >> "$GITHUB_OUTPUT"
           echo "semver=$(nbgv get-version -v SemVer2)"  >> "$GITHUB_OUTPUT"
 
-      # 8️⃣  Decide whether we have any tags yet  🆕
-      - name: 🕵️ Detect previous tag
-        id: tagcheck
+      # 8️⃣  Create a throw-away bootstrap tag if this repo has none
+      - name: 🏷️  Bootstrap first tag when repo is tag-less
         run: |
-          if git tag --list | grep -q . ; then
-            echo "commit_mode=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "commit_mode=true"  >> "$GITHUB_OUTPUT"
+          if ! git tag --list | grep -q . ; then
+            echo "No tags found – creating bootstrap tag 0.0.0"
+            git tag 0.0.0   # lightweight tag on current HEAD
           fi
+
 
       # 9️⃣  Build & upload release-notes.md  (uses commitMode flag)
       - name: 📝 Generate release notes
