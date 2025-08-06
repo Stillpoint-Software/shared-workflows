@@ -70,25 +70,36 @@ jobs:
           [ "$INC" = "patch" ] && INC=revision
           echo "inc=$INC" >> "$GITHUB_OUTPUT"
 
-      # 5️⃣  Install NBGV CLI 
+      # 5️⃣  Install the NBGV CLI
       - name: 🔧 Install NBGV CLI
         run: dotnet tool install -g nbgv --version 3.8.38-alpha
 
-      - name: ⚙️  Configure Git for commits
-        run: |
-          git config user.name  "release-bot"
-          git config user.email "release-bot@users.noreply.github.com"
-
-      # 6️⃣  Bump version and create the release branch
+      # 6️⃣  Prepare the release branch with an explicit patch bump
       - name: 🛠️  Prepare release branch
         id: prep_release
         run: |
+          set -euo pipefail
+
+          # Determine a prerelease tag only for non-main branches
           TAG_ARG=""
           if [[ "${{ inputs.target_branch }}" != "main" && "${{ inputs.target_branch }}" != "master" ]]; then
-            TAG_ARG="dev"   # or whatever prerelease you want
+            TAG_ARG="dev"
           fi
 
-          nbgv prepare-release $TAG_ARG -p .
+          # 1) Read the current SemVer2 (e.g. "1.0.0")  
+          CURRENT=$(nbgv get-version -v SemVer2)
+
+          # 2) Split and bump the patch segment
+          IFS='.' read -r MAJ MIN PATCH <<< "$CURRENT"
+          NEXT="$MAJ.$MIN.$((PATCH + 1))"
+          echo "Calculated next version: $NEXT"
+
+          # 3) Call prepare-release with --nextVersion
+          nbgv prepare-release $TAG_ARG \
+                 --nextVersion "$NEXT" \
+                 -p .
+
+          # 4) Expose the branch name for downstream jobs
           echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
 
       # 7️⃣  Resolve the exact tag & SemVer2
