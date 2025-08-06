@@ -80,6 +80,17 @@ jobs:
           firstUnstableTag: dev               
           versionFile:      version.json
           setCommonVars:    true
+
+      - name: 🔧 Install NBGV CLI
+        run: dotnet tool install -g nbgv --version 3.8.38-alpha
+
+      - name: 🔖 Resolve tag & SemVer
+        id: version
+        run: |
+          TAG=$(dotnet nbgv get-version -v GitTagName)
+          SEMVER=$(dotnet nbgv get-version -v SemVer2)
+          echo "tag=$TAG"    >> "$GITHUB_OUTPUT"
+          echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
           
        # 6️⃣  Resolve the *exact* tag & SemVer2 produced by Nerdbank
       - name: 🔖 Resolve tag & SemVer
