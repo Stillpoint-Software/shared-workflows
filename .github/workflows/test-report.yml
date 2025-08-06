@@ -37,21 +37,13 @@ jobs:
           find . -maxdepth 4 -type f -name '*.trx' -print || true
 
       - name: ⬇️  Download test artifacts from Test run
-        if: ${{ inputs.test_run_id != '' }}      # empty string in auto mode
+        if: ${{ inputs.test_run_id != '' }}
         uses: actions/download-artifact@v4
         with:
-          # ID of the run that produced the artifacts
-          run-id:       ${{ inputs.test_run_id }}
-      
-          # Name of the artifact your Test workflow uploads
-          # (adjust if you use something other than "test-results")
-          name:         test-results
-      
-          # Optional—but avoids rate-limit issues on private repos
-          github-token: ${{ secrets.GH_TOKEN || github.token }}
-      
-          # Where to put the files (root is fine)
-          path:         .
+          run-id: ${{ inputs.test_run_id }}
+          # Omit “name:” to pull *all* artifacts from that run,
+          # including test-results-net8.0 and test-results-net9.0
+          path: .          # Save them to the working directory
           
       # 📊 Generate combined report (matches both framework artifacts)
       - name: Publish test report
