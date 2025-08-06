@@ -39,9 +39,9 @@ jobs:
     runs-on: ubuntu-latest
 
     outputs:
-      release_branch: ${{ steps.nbgv.outputs.BranchName }}
-      tag:            ${{ steps.version.outputs.tag }}   
-      semver:         ${{ steps.version.outputs.semver }}  
+      release_branch: ${{ steps.prep_release.outputs.branch }}
+      tag:            ${{ steps.version.outputs.tag }}
+      semver:         ${{ steps.version.outputs.semver }}
 
     steps:
       # 1️⃣  Checkout the target branch / tag
@@ -70,20 +70,21 @@ jobs:
           [ "$INC" = "patch" ] && INC=revision
           echo "inc=$INC" >> "$GITHUB_OUTPUT"
 
-      # 5️⃣  Bump version and create the release branch
-      - name: 🛠️  Bump version & create branch
-        id: nbgv
-        uses: dotnet/nbgv@v0.4.2
-        with:
-          toolVersion:      3.8.38-alpha
-          versionIncrement: ${{ steps.map.outputs.inc }}     # ← dynamic now
-          firstUnstableTag: dev
-          versionFile:      ${{ inputs.version_file_path }}
-          setCommonVars:    true
-    
-      # 6️⃣  Install CLI once so we can query it
+      # 5️⃣  Install NBGV CLI once
       - name: 🔧 Install NBGV CLI
         run: dotnet tool install -g nbgv --version 3.8.38-alpha
+
+      # 6️⃣  Bump version and create the release branch
+      - name: 🛠️  Prepare release branch
+        id: prep_release
+        run: |
+          nbgv prepare-release \
+               --versionIncrement ${{ steps.map.outputs.inc }} \
+               --firstUnstableTag dev \
+               --versionFile      "${{ inputs.version_file_path }}"
+
+          # expose the branch name for the Pack workflow
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
 
       # 7️⃣  Resolve the exact tag & SemVer2
       - name: 🔖 Resolve tag & SemVer
@@ -102,12 +103,24 @@ jobs:
             git push origin 0.0.0
           fi
 
-      # 9️⃣  Build & upload release-notes.md  (now in normal tag-diff mode)
+      # 9️⃣  Generate release notes (normal tag-diff mode)
       - name: 📝 Generate release notes
         id: changelog
         uses: mikepenz/release-changelog-builder-action@v5
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
 
+      # 🔒 Always create & upload the notes so the Pack job can grab them  
       - name: 💾 Save notes to file
-        run: echo "${{ steps.changelog.outputs.changelog }}" > release-notes.md
+        if: always()
+        run: |
+          CONTENT="${{ steps.changelog.outputs.changelog || '# Initial release' }}"
+          echo "$CONTENT" > release-notes.md
+          ls -l release-notes.md
+
+      - name: 📦 Upload release notes artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release_notes
+          path: release-notes.md
