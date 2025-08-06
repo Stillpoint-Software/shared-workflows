@@ -1,4 +1,4 @@
-name: Create Issue Branch
+name: Create Test Report
 
 on:
   workflow_call:
