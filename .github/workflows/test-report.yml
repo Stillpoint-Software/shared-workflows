@@ -36,6 +36,19 @@ jobs:
           echo "Listing *.trx we have so far:"
           find . -maxdepth 4 -type f -name '*.trx' -print || true
 
+      - name: 🐞 Debug run-ID
+        run: |
+          echo "inputs.test_run_id = ${{ inputs.test_run_id }}"
+          echo "github.repository  = ${{ github.repository }}"
+
+      - name: 🐞 List artifacts on run
+        run: |
+          gh api \
+            repos/${{ github.repository }}/actions/runs/${{ inputs.test_run_id }}/artifacts \
+            --jq '.artifacts[] | {name, size_in_bytes}'
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+
       - name: ⬇️  Download ALL artifacts from Test run
         if: ${{ inputs.test_run_id != '' }}        # manual runs only
         uses: actions/download-artifact@v4
