@@ -26,12 +26,22 @@ on:
         description: "GitHub token (falls back to github.token)"
         required: false
 
+    outputs:                   
+      tag_name:
+        description: "Git tag from Nerdbank"
+        value:  ${{ jobs.prep.outputs.tag }}
+      semver2:
+        description: "SemVer2 string"
+        value:  ${{ jobs.prep.outputs.semver }}
+
 jobs:
   prep:
     runs-on: ubuntu-latest
 
     outputs:
       release_branch: ${{ steps.nbgv.outputs.BranchName }}
+      tag:    ${{ steps.nbgv.outputs.tag }}
+      semver: ${{ steps.nbgv.outputs.semver }}
 
     steps:
       # 1️⃣  Checkout the target branch / tag
@@ -70,5 +80,39 @@ jobs:
           firstUnstableTag: dev               
           versionFile:      version.json
           setCommonVars:    true
+          
+       # 6️⃣  Resolve the *exact* tag & SemVer2 produced by Nerdbank
+      - name: 🔖 Resolve tag & SemVer
+        id: version
+        run: |
+          TAG=$(dotnet nbgv get-version -v GitTagName)
+          SEMVER=$(dotnet nbgv get-version -v SemVer2)
+          echo "tag=$TAG"    >> "$GITHUB_OUTPUT"
+          echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
+          
+      # 7️⃣  Build & upload release-notes.md
+      - name: 📝 Generate release notes
+        id: changelog
+        uses: mikepenz/release-changelog-builder-action@v5
+        #with:
+          # If you have a custom grouping template, point to it here.
+          # configuration: .github/release-notes-config.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
 
+      - name: 💾 Save notes to file
+        run: echo "${{ steps.changelog.outputs.changelog }}" > release-notes.md
 
+      # Commit the notes to the release branch
+      - name: 📚 Commit release-notes.md
+        run: |
+          git config user.name  "release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+          git add release-notes.md
+          git commit -m "docs: add release notes for ${{ steps.version.outputs.tag }}" || echo "No change"
+
+      - name: 📦 Upload release notes artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release_notes         
+          path: release-notes.md
