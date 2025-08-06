@@ -4,26 +4,17 @@ on:
   workflow_run:
     workflows: ["Test"]
     types: [completed]
-    branches: [main, develop]          # ← don’t run for misc feature branches
-  workflow_call:
-    inputs:
-      test_run_id:
-        required: false
-        type: string
-      branch:
-        required: false
-        type: string
+    branches: [main, develop]          
         
 permissions:
   contents: read
-  actions: read        # download upstream artifacts
+  actions: read      
   checks: write
 
 jobs:
   report:
     runs-on: ubuntu-latest
     steps:
-      # Optional: checkout the exact commit the Test job ran on
       - name: Checkout code @ tested SHA
         uses: actions/checkout@v4
         with:
@@ -35,14 +26,6 @@ jobs:
           echo "inputs.test_run_id = ${{ inputs.test_run_id }}"
           echo "github.repository  = ${{ github.repository }}"
 
-      - name: 🐞 List artifacts on run
-        run: |
-          gh api \
-            repos/${{ github.repository }}/actions/runs/${{ inputs.test_run_id }}/artifacts \
-            --jq '.artifacts[] | {name, size_in_bytes}'
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
-
       - name: ⬇️  Download ALL artifacts from Test run
         if: ${{ inputs.test_run_id != '' }}        # manual runs only
         uses: actions/download-artifact@v4
@@ -50,10 +33,7 @@ jobs:
             repository:   ${{ github.repository }} 
             run-id:       ${{ inputs.test_run_id }}
             path:         .
-            # ⚠️  omit “name:” ⇒ pulls every artifact in that run
-            #     (test-results-net8.0, test-results-net9.0, etc.)
       
-      # 2. Reporter keeps the regex (works for both triggers)
       - uses: dorny/test-reporter@v1
         with:
           artifact: /test-results-net[89]\.0/
