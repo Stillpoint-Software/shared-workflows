@@ -3,52 +3,47 @@ name: Test Report
 on:
   workflow_run:
     workflows: ["Test"]
-    types:
-      - completed
+    types: [completed]
+    branches: [main, develop]          # ← don’t run for misc feature branches
+
+permissions:
+  contents: read
+  actions: read        # download upstream artifacts
+  checks: write
 
 jobs:
-  report:
+  discover:
     runs-on: ubuntu-latest
-
+    outputs:
+      head_branch: ${{ steps.meta.outputs.branch }}
+      head_sha:    ${{ steps.meta.outputs.sha }}
     steps:
-
-     # 🔍 Sanity-check: list everything the action just downloaded
-      - name: Show downloaded artifact contents
-        run: ls -R
-        
-      - name: Download .NET 9.0 Test Results
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          workflow: Test
-          run_id: ${{ github.event.workflow_run.id }}
-          name: test-results-net9.0
-          path: ./TestResults/net9.0
-
-      - name: Download .NET 8.0 Test Results
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          workflow: Test
-          run_id: ${{ github.event.workflow_run.id }}
-          name: test-results-net8.0
-          path: ./TestResults/net8.0
-
-      - name: Checkout Code
+      - id: meta
+        run: |
+          echo "branch=${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_OUTPUT"
+          echo "sha=${{   github.event.workflow_run.head_sha    }}" >> "$GITHUB_OUTPUT"
+  report:
+    needs: discover
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout **the same commit** that the Test job ran on
+      - name: Checkout code @ tested SHA
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ needs.discover.outputs.head_sha }}
 
-      - name: List Downloaded Files
-        run: |
-          echo "📂 Listing all downloaded artifact files..."
-          ls -R ./TestResults || echo "⚠️ No TestResults directory found"
+      # Optional: sanity listing of what GitHub auto-downloaded
+      - name: Show downloaded artifacts
+        run: ls -R
 
-      - name: Generate Combined Test Report
+      # 📊 Publish report — let the action pull both artifacts
+      - name: Generate combined test report
         uses: dorny/test-reporter@v1
         with:
-          artifact: |
-            test-results-net9.0
-            test-results-net8.0
-          name: Unit Tests (.NET 8 & 9)
+          # regex matches both test-results-net8.0 and test-results-net9.0
+          artifact: /test-results-net[89]\.0/
+          name: "Unit Tests (.NET 8 & 9)"
           path: '**/*.trx'
           reporter: dotnet-trx
           fail-on-error: false
