@@ -83,13 +83,14 @@ jobs:
             PUBLIC_RELEASE_FLAG="-p:PublicRelease=true"
           fi
 
-          dotnet pack -c ${{ inputs.build_configuration }} \
-                      --no-build --no-restore \
-                      --output ./artifacts \
-                      $PUBLIC_RELEASE_FLAG \
-                      $EXTRA_FLAGS
-                      -p:PackageVersion=${{ inputs.semver2 }} \
-                      -p:PackageReleaseNotes="https://github.com/${{ github.repository }}/releases/tag/${{ inputs.tag_name }}"
+          dotnet pack \
+            -c ${{ inputs.build_configuration }} \
+            --no-build --no-restore \
+            --output ./artifacts \
+            $PUBLIC_RELEASE_FLAG \
+            $EXTRA_FLAGS \
+            -p:PackageVersion=${{ inputs.semver2 }} \
+            -p:PackageReleaseNotes="https://github.com/${{ github.repository }}/releases/tag/${{ inputs.tag_name }}"
 
       - name: 🚀 Publish to NuGet
         if: ${{ inputs.push_after_pack }}
