@@ -5,11 +5,11 @@ on:
     inputs:
       test_run_id:
         description: "Run ID of the completed Test workflow"
-        required: false
+        required: true
         type: string
       branch:
         description: "Branch Test was run on"
-        required: false
+        required: true
         type: string       
         
 permissions:
