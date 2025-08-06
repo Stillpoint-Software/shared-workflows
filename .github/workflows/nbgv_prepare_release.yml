@@ -80,7 +80,7 @@ jobs:
           firstUnstableTag: dev
           versionFile:      ${{ inputs.version_file_path }}
           setCommonVars:    true
-
+    
       # 6️⃣  Install CLI once so we can query it
       - name: 🔧 Install NBGV CLI
         run: dotnet tool install -g nbgv --version 3.8.38-alpha
@@ -89,8 +89,8 @@ jobs:
       - name: 🔖 Resolve tag & SemVer
         id: version
         run: |
-          echo "tag=$(dotnet nbgv get-version -v GitTagName)" >> "$GITHUB_OUTPUT"
-          echo "semver=$(dotnet nbgv get-version -v SemVer2)" >> "$GITHUB_OUTPUT"
+          echo "tag=$(nbgv get-version -v GitTagName)"  >> "$GITHUB_OUTPUT"
+          echo "semver=$(nbgv get-version -v SemVer2)"  >> "$GITHUB_OUTPUT"
 
       # 8️⃣  Build & upload release-notes.md
       - name: 📝 Generate release notes
