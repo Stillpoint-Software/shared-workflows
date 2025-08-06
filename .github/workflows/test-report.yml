@@ -30,12 +30,6 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      # 🔍 Debug – list any .trx files that GitHub auto-downloaded
-      - name: List workspace before reporter
-        run: |
-          echo "Listing *.trx we have so far:"
-          find . -maxdepth 4 -type f -name '*.trx' -print || true
-
       - name: 🐞 Debug run-ID
         run: |
           echo "inputs.test_run_id = ${{ inputs.test_run_id }}"
@@ -53,6 +47,7 @@ jobs:
         if: ${{ inputs.test_run_id != '' }}        # manual runs only
         uses: actions/download-artifact@v4
         with:
+            repository:   ${{ github.repository }} 
             run-id:       ${{ inputs.test_run_id }}
             path:         .
             # ⚠️  omit “name:” ⇒ pulls every artifact in that run
