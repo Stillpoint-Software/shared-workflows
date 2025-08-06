@@ -85,7 +85,7 @@ jobs:
           echo "Calculated next version: $NEXT"
 
           nbgv prepare-release $TAG_ARG \
-                 --nextVersion "$NEXT" \
+                 --nextVersion "$NEXT" 
 
           git add "${{ inputs.version_file_path }}"
           git commit -m "chore: bump version to $NEXT"
