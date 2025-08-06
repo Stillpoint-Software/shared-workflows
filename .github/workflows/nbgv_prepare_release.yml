@@ -70,9 +70,14 @@ jobs:
           [ "$INC" = "patch" ] && INC=revision
           echo "inc=$INC" >> "$GITHUB_OUTPUT"
 
-      # 5️⃣  Install NBGV CLI once
+      # 5️⃣  Install NBGV CLI 
       - name: 🔧 Install NBGV CLI
         run: dotnet tool install -g nbgv --version 3.8.38-alpha
+
+      - name: ⚙️  Configure Git for commits
+        run: |
+          git config user.name  "release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
 
       # 6️⃣  Bump version and create the release branch
       - name: 🛠️  Prepare release branch
@@ -84,9 +89,7 @@ jobs:
           fi
 
           nbgv prepare-release $TAG_ARG -p .
-
           echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
-
 
       # 7️⃣  Resolve the exact tag & SemVer2
       - name: 🔖 Resolve tag & SemVer
