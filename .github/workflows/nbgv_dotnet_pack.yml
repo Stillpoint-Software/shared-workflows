@@ -42,6 +42,9 @@ on:
       NUGET_API_KEY:
         description: "API key for pushing to NuGet.org"
         required: true
+      GH_TOKEN:
+        description: "GitHub token (falls back to github.token)"
+        required: false
 jobs:
   pack:
     runs-on: ubuntu-latest
@@ -70,13 +73,11 @@ jobs:
 
       - name: 📦 Pack
         run: |
-          # symbols/source only when caller asks
           EXTRA_FLAGS=""
           if [ "${{ inputs.force_dev_prerelease }}" = "true" ]; then
             EXTRA_FLAGS="--include-symbols --include-source"
           fi
 
-          # PublicRelease strips commit-height *only* on Release builds
           PUBLIC_RELEASE_FLAG=""
           if [ "${{ inputs.build_configuration }}" = "Release" ]; then
             PUBLIC_RELEASE_FLAG="-p:PublicRelease=true"
@@ -87,6 +88,8 @@ jobs:
                       --output ./artifacts \
                       $PUBLIC_RELEASE_FLAG \
                       $EXTRA_FLAGS
+                      -p:PackageVersion=${{ inputs.semver2 }} \
+                      -p:PackageReleaseNotes="https://github.com/${{ github.repository }}/releases/tag/${{ inputs.tag_name }}"
 
       - name: 🚀 Publish to NuGet
         if: ${{ inputs.push_after_pack }}
@@ -139,3 +142,12 @@ jobs:
                 --api-key "$NUGET_API_KEY"
             done <<< "$to_delete"
           done
+
+      - name: 🚀 Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:  ${{ inputs.tag_name }}
+          body_path: release-notes.md
+          prerelease: ${{ contains(inputs.semver2, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
