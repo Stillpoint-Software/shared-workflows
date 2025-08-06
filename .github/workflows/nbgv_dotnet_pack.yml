@@ -73,11 +73,12 @@ jobs:
 
       - name: 📦 Pack
         run: |
-          EXTRA_FLAGS=""
-          if [ "${{ inputs.force_dev_prerelease }}" = "true" ]; then
-            EXTRA_FLAGS="--include-symbols --include-source"
+          if [[ "${{ inputs.semver2 }}" == *-* ]]; then
+            dotnet pack … --include-symbols --include-source …
+          else
+            dotnet pack …
           fi
-
+          
           PUBLIC_RELEASE_FLAG=""
           if [ "${{ inputs.build_configuration }}" = "Release" ]; then
             PUBLIC_RELEASE_FLAG="-p:PublicRelease=true"
