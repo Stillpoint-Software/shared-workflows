@@ -124,6 +124,25 @@ jobs:
             --api-key "$NUGET_API_KEY" \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
+            
+    # 👇 Get the version from Nerdbank.GitVersioning
+      - name: Get Nerdbank Version
+        id: nbgv
+        run: |
+          version=$(dotnet nbgv get-version --variable SemVer2)
+          echo "semver=$version" >> $GITHUB_OUTPUT
+
+      # 👇 Create the GitHub Release
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.nbgv.outputs.semver }}
+          name: Release ${{ steps.nbgv.outputs.semver }}
+          draft: false
+          prerelease: ${{ contains(steps.nbgv.outputs.semver, '-') }}
+          files: ./artifacts/*.nupkg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🧹 Prune old package versions
         if: ${{ inputs.push_after_pack && inputs.prune_after_push }}
@@ -167,13 +186,3 @@ jobs:
                 --api-key "$NUGET_API_KEY"
             done <<< "$to_delete"
           done
-
-
-      - name: 🚀 Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name:  ${{ inputs.tag_name }}
-          body_path: release-notes.md
-          prerelease: ${{ contains(inputs.semver2, '-') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
