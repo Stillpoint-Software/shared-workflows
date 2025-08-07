@@ -132,7 +132,8 @@ jobs:
       - name: Get Nerdbank Version
         id: nbgv
         run: |
-          version=$(dotnet nbgv get-version --variable SemVer2)
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          version=$(nbgv get-version --variable SemVer2)
           echo "semver=$version" >> $GITHUB_OUTPUT
 
       # 👇 Create the GitHub Release
