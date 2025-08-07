@@ -70,7 +70,7 @@ jobs:
         
       - name: Set Build Configuration
         id: set_config
-        run: |]];
+        run: |
           if [[ "${GITHUB_REF##*/}" == "main" || "${GITHUB_REF##*/}" == "master"  then
             echo "config=Release" >> $GITHUB_OUTPUT
           else
