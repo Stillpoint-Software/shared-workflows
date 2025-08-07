@@ -58,11 +58,12 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: 🔖 Resolve tag & SemVer
+      - name: 🔖 Resolve SemVer
         id: version
         run: |
-          echo "tag=$(nbgv get-version -v GitTagName)"  >> "$GITHUB_OUTPUT"
-          echo "semver=$(nbgv get-version -v SemVer2)"  >> "$GITHUB_OUTPUT"
+          semver=$(nbgv get-version -v SemVer2)
+          echo "semver=$semver"  >> "$GITHUB_OUTPUT"
+          echo "tag=v$semver"    >> "$GITHUB_OUTPUT"
 
       - name: 🏷️  Bootstrap first tag if repo is tag-less
         env:
