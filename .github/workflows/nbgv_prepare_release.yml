@@ -65,14 +65,19 @@ jobs:
           echo "semver=$(nbgv get-version -v SemVer2)"  >> "$GITHUB_OUTPUT"
 
       - name: 🏷️  Bootstrap first tag when repo is tag-less
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if ! git tag --list | grep -q . ; then
-            echo "No tags found – creating bootstrap tag 0.0.0 on the root commit"
+            version="${{ steps.version.outputs.semver }}"
+            echo "No tags found – creating bootstrap tag $version on the root commit"
             ROOT=$(git rev-list --max-parents=0 HEAD)
-            git tag 0.0.0 "$ROOT"
-            git push origin 0.0.0
+            git config user.name "github-actions"
+            git config user.email "github-actions@github.com"
+            git tag "$version" "$ROOT"
+            git push https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git "$version"
           fi
-
+          
       - name: 🛠️ Prepare release
         id: prep_release
         run: |
