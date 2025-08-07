@@ -125,6 +125,9 @@ jobs:
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
             
+      - name: Install Nerdbank.GitVersioning tool
+        run: dotnet tool install -g nbgv
+        
     # 👇 Get the version from Nerdbank.GitVersioning
       - name: Get Nerdbank Version
         id: nbgv
