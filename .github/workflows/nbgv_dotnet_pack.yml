@@ -94,7 +94,7 @@ jobs:
               echo ""
               echo "Packing: $csproj"
               if dotnet pack "$csproj" \
-                -c "${{ inputs.build_configuration }}" \
+                -c "${{ steps.set_config.outputs.config }}" \
                 --no-build --no-restore \
                 --output ./artifacts \
                 -p:PackageVersion="${{ inputs.semver2 }}" \
