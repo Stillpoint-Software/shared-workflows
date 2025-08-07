@@ -59,7 +59,7 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "9.0.x"
-          
+
       - name: ⬇️ Download release notes
         uses: actions/download-artifact@v4
         with:
@@ -71,27 +71,49 @@ jobs:
       - name: 🏗️ Build
         run: dotnet build -c ${{ inputs.build_configuration }} --no-restore
 
-      - name: 📦 Pack
+      - name: 📦 Pack all packable projects
+        shell: bash
         run: |
-          if [[ "${{ inputs.semver2 }}" == *-* ]]; then
-            dotnet pack … --include-symbols --include-source …
-          else
-            dotnet pack …
-          fi
-          
-          PUBLIC_RELEASE_FLAG=""
-          if [ "${{ inputs.build_configuration }}" = "Release" ]; then
-            PUBLIC_RELEASE_FLAG="-p:PublicRelease=true"
+          set -euo pipefail
+
+          echo "Finding all packable projects..."
+          found_any=0
+          failed=0
+          while IFS= read -r csproj; do
+            if grep -q '<IsPackable>true</IsPackable>' "$csproj"; then
+              found_any=1
+              echo ""
+              echo "Packing: $csproj"
+              if dotnet pack "$csproj" \
+                -c "${{ inputs.build_configuration }}" \
+                --no-build --no-restore \
+                --output ./artifacts \
+                -p:PackageVersion="${{ inputs.semver2 }}" \
+                -p:PackageReleaseNotes="https://github.com/${{ github.repository }}/releases/tag/${{ inputs.tag_name }}"; then
+                echo "✅ Packed $csproj"
+              else
+                echo "❌ Failed to pack $csproj"
+                failed=1
+              fi
+            else
+              echo "Skipping: $csproj (IsPackable is not true)"
+            fi
+          done < <(find . -name '*.csproj')
+
+          if [[ "$found_any" -eq 0 ]]; then
+            echo "No packable projects found! (No csproj with <IsPackable>true</IsPackable>)"
+            exit 1
           fi
 
-          dotnet pack \
-            -c ${{ inputs.build_configuration }} \
-            --no-build --no-restore \
-            --output ./artifacts \
-            $PUBLIC_RELEASE_FLAG \
-            $EXTRA_FLAGS \
-            -p:PackageVersion=${{ inputs.semver2 }} \
-            -p:PackageReleaseNotes="https://github.com/${{ github.repository }}/releases/tag/${{ inputs.tag_name }}"
+          if [[ "$failed" -eq 1 ]]; then
+            echo "One or more projects failed to pack."
+            exit 1
+          fi
+
+          echo ""
+          echo "All packable projects successfully packed to ./artifacts"
+          echo "Packed NuGet packages:"
+          ls -lh ./artifacts/*.nupkg
 
       - name: 🚀 Publish to NuGet
         if: ${{ inputs.push_after_pack }}
@@ -102,12 +124,9 @@ jobs:
             --api-key "$NUGET_API_KEY" \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
-            
-       # 🧹 Prune older versions on nuget.org
+
       - name: 🧹 Prune old package versions
-        if: |
-          inputs.push_after_pack == 'true' &&
-          inputs.prune_after_push == 'true'
+        if: ${{ inputs.push_after_pack && inputs.prune_after_push }}
         shell: bash
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
@@ -119,13 +138,11 @@ jobs:
 
           for nupkg in ./artifacts/*.nupkg; do
             pkgfile=$(basename "$nupkg")
-            id="${pkgfile%%.*}"         # crude but works: Sample.Api.1.2.3.nupkg → Sample
-
+            # More robust NuGet ID extraction (handles multi-dot names)
+            id=$(echo "$pkgfile" | sed -E 's|^(.*)-[0-9]+\.[0-9]+(\.[0-9]+)*\.nupkg$|\1|')
             echo "🔍 Processing $id …"
 
-            # Query nuget flat-container for the full version list
-            all=$(curl -sL "https://api.nuget.org/v3-flatcontainer/${id,,}/index.json" \
-                  | jq -r '.versions[]')
+            all=$(curl -sL "https://api.nuget.org/v3-flatcontainer/${id,,}/index.json" | jq -r '.versions[]')
 
             count=$(echo "$all" | wc -l)
             if [[ $count -le $KEEP ]]; then
@@ -133,7 +150,6 @@ jobs:
               continue
             fi
 
-            # newest-to-oldest using sort --version-sort
             to_delete=$(echo "$all" | sort -Vr | tail -n +"$((KEEP+1))")
 
             while read -r ver; do
