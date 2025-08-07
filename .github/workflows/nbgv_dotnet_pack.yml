@@ -67,9 +67,18 @@ jobs:
 
       - name: 🔄 Restore
         run: dotnet restore
-
+        
+      - name: Set Build Configuration
+        id: set_config
+        run: |]];
+          if [[ "${GITHUB_REF##*/}" == "main" || "${GITHUB_REF##*/}" == "master"  then
+            echo "config=Release" >> $GITHUB_OUTPUT
+          else
+            echo "config=Debug" >> $GITHUB_OUTPUT
+          fi
+          
       - name: 🏗️ Build
-        run: dotnet build -c ${{ inputs.build_configuration }} --no-restore
+        run:  dotnet build -c ${{ steps.set_config.outputs.config }} --no-restore
 
       - name: 📦 Pack all packable projects
         shell: bash
