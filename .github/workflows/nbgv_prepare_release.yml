@@ -63,9 +63,9 @@ jobs:
       - name: 🔖 Resolve SemVer
         id: version
         run: |
-          semver=$(nbgv get-version -v SemVer2)
-          echo "semver=$semver"  >> "$GITHUB_OUTPUT"
-          echo "tag=v$semver"    >> "$GITHUB_OUTPUT"
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          semver=$(dotnet nbgv get-version --variable SemVer2)
+          echo "semver=$semver" >> $GITHUB_OUTPUT
 
       - name: 🏷️  Bootstrap first tag if repo is tag-less
         env:
