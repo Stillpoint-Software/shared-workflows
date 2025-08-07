@@ -3,6 +3,10 @@ name: Test
 on:
   workflow_call:
     inputs:
+      branch:
+        description: "Branch to test"
+        type: string
+        required: true
       solution_name:
         description: "Solution file to build and test"
         required: true
@@ -32,7 +36,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GH_TOKEN || github.token }}
+          ref: ${{ inputs.branch }}
           fetch-depth: 0
 
       - name: Setup .NET SDKs
