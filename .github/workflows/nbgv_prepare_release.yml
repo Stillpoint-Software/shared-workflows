@@ -53,6 +53,11 @@ jobs:
       - name: Install Nerdbank.GitVersioning tool (3.8.38-alpha)
         run: dotnet tool update -g nbgv --version 3.8.38-alpha || dotnet tool install -g nbgv --version 3.8.38-alpha
 
+      - name: 📋 Configure Git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
       - name: Get Nerdbank Version
         id: version
         run: |
