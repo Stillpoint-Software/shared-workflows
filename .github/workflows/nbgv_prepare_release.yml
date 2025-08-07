@@ -8,7 +8,7 @@ on:
         type: string
         required: true
       increment:
-        description: "Version increment (major | minor | hotfix)"
+        description: "Version increment (major | minor | patch)"
         type: string
         required: true
       version_file_path:
