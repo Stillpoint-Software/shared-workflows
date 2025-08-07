@@ -8,16 +8,8 @@ on:
         type: string
         required: true
       build_configuration:
-        description: "Build configuration (e.g. Release, Develop)"
+        description: "Build configuration (Release/Debug)"
         type: string
-        required: true
-      push_after_pack:
-        description: "Whether to push the resulting .nupkg"
-        type: boolean
-        required: true
-      force_dev_prerelease:
-        description: "Whether to include dev prerelease symbols"
-        type: boolean
         required: true
       tag_name:
         description: "Exact Git tag produced by Nerdbank"
@@ -27,24 +19,24 @@ on:
         description: "SemVer2 version string"
         type: string
         required: true
-      prune_after_push:             
+      prune_after_push:
         description: "Delete old package versions after a successful push"
         type: boolean
         default: true
         required: false
-      prune_keep:                   
+      prune_keep:
         description: "Versions to retain per package"
         type: number
         default: 5
         required: false
-        
     secrets:
       NUGET_API_KEY:
         description: "API key for pushing to NuGet.org"
         required: true
       GH_TOKEN:
-        description: "GitHub token (falls back to github.token)"
+        description: "GitHub token"
         required: false
+
 jobs:
   pack:
     runs-on: ubuntu-latest
@@ -67,24 +59,14 @@ jobs:
 
       - name: 🔄 Restore
         run: dotnet restore
-        
-      - name: Set Build Configuration
-        id: set_config
-        run: |
-          if [[ "${GITHUB_REF##*/}" == "main" || "${GITHUB_REF##*/}" == "master"  then
-            echo "config=Release" >> $GITHUB_OUTPUT
-          else
-            echo "config=Debug" >> $GITHUB_OUTPUT
-          fi
-          
+
       - name: 🏗️ Build
-        run:  dotnet build -c ${{ steps.set_config.outputs.config }} --no-restore
+        run: dotnet build -c ${{ inputs.build_configuration }} --no-restore
 
       - name: 📦 Pack all packable projects
         shell: bash
         run: |
           set -euo pipefail
-
           echo "Finding all packable projects..."
           found_any=0
           failed=0
@@ -94,7 +76,7 @@ jobs:
               echo ""
               echo "Packing: $csproj"
               if dotnet pack "$csproj" \
-                -c "${{ steps.set_config.outputs.config }}" \
+                -c "${{ inputs.build_configuration }}" \
                 --no-build --no-restore \
                 --output ./artifacts \
                 -p:PackageVersion="${{ inputs.semver2 }}" \
@@ -108,24 +90,20 @@ jobs:
               echo "Skipping: $csproj (IsPackable is not true)"
             fi
           done < <(find . -name '*.csproj')
-
           if [[ "$found_any" -eq 0 ]]; then
             echo "No packable projects found! (No csproj with <IsPackable>true</IsPackable>)"
             exit 1
           fi
-
           if [[ "$failed" -eq 1 ]]; then
             echo "One or more projects failed to pack."
             exit 1
           fi
-
           echo ""
           echo "All packable projects successfully packed to ./artifacts"
           echo "Packed NuGet packages:"
           ls -lh ./artifacts/*.nupkg
 
       - name: 🚀 Publish to NuGet
-        if: ${{ inputs.push_after_pack }}
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
@@ -133,63 +111,54 @@ jobs:
             --api-key "$NUGET_API_KEY" \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
-            
-      - name: Install Nerdbank.GitVersioning tool (3.8.38-alpha)
-        run: dotnet tool update -g nbgv --version 3.8.38-alpha || dotnet tool install -g nbgv --version 3.8.38-alpha
-        
-    # 👇 Get the version from Nerdbank.GitVersioning
-      - name: Get Nerdbank Version
-        id: nbgv
-        run: |
-          export PATH="$PATH:$HOME/.dotnet/tools"
-          version=$(nbgv get-version --variable SemVer2)
-          echo "semver=$version" >> $GITHUB_OUTPUT
 
-      # 👇 Create the GitHub Release
+      - name: 📝 Read release notes
+        id: notes
+        run: |
+          if [[ -f release-notes.md ]]; then
+            echo "body<<EOF" >> $GITHUB_OUTPUT
+            cat release-notes.md >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "body=No release notes found" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.nbgv.outputs.semver }}
-          name: Release ${{ steps.nbgv.outputs.semver }}
+          tag_name: ${{ inputs.tag_name }}
+          name: Release ${{ inputs.tag_name }}
           draft: false
-          prerelease: ${{ contains(steps.nbgv.outputs.semver, '-') }}
-          files: ./artifacts/*.nupkg
+          prerelease: ${{ contains(inputs.tag_name, '-') }}
+          body: ${{ steps.notes.outputs.body }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
 
       - name: 🧹 Prune old package versions
-        if: ${{ inputs.push_after_pack && inputs.prune_after_push }}
+        if: ${{ inputs.prune_after_push }}
         shell: bash
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
           set -euo pipefail
           KEEP=${{ inputs.prune_keep }}
-  
           echo "Will keep the newest $KEEP version(s) for each pushed package."
-  
           for nupkg in ./artifacts/*.nupkg; do
             pkgfile=$(basename "$nupkg")
-            # Robust NuGet ID extraction (handles multi-dot names and prereleases)
             id=$(echo "$pkgfile" | sed -E 's|(.*)-[0-9]+\.[0-9]+(\.[0-9]+)*(-[A-Za-z0-9\.\-]+)?\.nupkg|\1|')
             echo "🔍 Processing $id …"
-  
-            # Fetch package versions from NuGet, with error handling
             resp=$(curl -sL "https://api.nuget.org/v3-flatcontainer/${id,,}/index.json")
             if ! echo "$resp" | jq . >/dev/null 2>&1; then
               echo "  ⚠️  Could not fetch versions for $id (maybe not published yet). Skipping."
               continue
             fi
-  
             all=$(echo "$resp" | jq -r '.versions[]')
             count=$(echo "$all" | wc -l)
             if [[ $count -le $KEEP ]]; then
               echo "  Nothing to prune ($count ≤ $KEEP)."
               continue
             fi
-  
             to_delete=$(echo "$all" | sort -Vr | tail -n +"$((KEEP+1))")
-  
             while read -r ver; do
               if [[ -z "$ver" ]]; then continue; fi
               echo "  🗑️  Deleting $id $ver"
