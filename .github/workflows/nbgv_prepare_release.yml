@@ -73,3 +73,24 @@ jobs:
           nbgv prepare-release --versionIncrement ${{ inputs.increment }}
           BRANCH=$(git rev-parse --abbrev-ref HEAD)
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+
+      - name: 📝 Generate release notes
+        id: changelog
+        uses: mikepenz/release-changelog-builder-action@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+
+      # 🔒 Always create & upload the notes so the Pack job can grab them  
+      - name: 💾 Save notes to file
+        if: always()
+        run: |
+          CONTENT="${{ steps.changelog.outputs.changelog || '# Initial release' }}"
+          echo "$CONTENT" > release-notes.md
+          ls -l release-notes.md
+
+      - name: 📦 Upload release notes artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release_notes
+          path: release-notes.md
