@@ -52,26 +52,21 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
-      - name: Install Nerdbank.GitVersioning tool
-        run: dotnet tool install -g nbgv
+      - name: Install Nerdbank.GitVersioning tool (3.8.38-alpha)
+        run: dotnet tool update -g nbgv --version 3.8.38-alpha || dotnet tool install -g nbgv --version 3.8.38-alpha
 
       - name: 📋 Configure Git identity
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-      - name: Show PATH and dotnet tools
-        run: |
-          echo $PATH
-          ls -l $HOME/.dotnet/tools
-          dotnet tool list -g
-          
+
       - name: 🔖 Resolve SemVer
         id: version
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
           semver=$(dotnet nbgv get-version --variable SemVer2)
           echo "semver=$semver" >> $GITHUB_OUTPUT
+          echo "tag=v$semver"  >> $GITHUB_OUTPUT
 
       - name: 🏷️  Bootstrap first tag if repo is tag-less
         env:
