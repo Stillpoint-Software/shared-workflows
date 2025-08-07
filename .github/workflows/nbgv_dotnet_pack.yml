@@ -133,26 +133,33 @@ jobs:
         run: |
           set -euo pipefail
           KEEP=${{ inputs.prune_keep }}
-
+  
           echo "Will keep the newest $KEEP version(s) for each pushed package."
-
+  
           for nupkg in ./artifacts/*.nupkg; do
             pkgfile=$(basename "$nupkg")
-            # More robust NuGet ID extraction (handles multi-dot names)
-            id=$(echo "$pkgfile" | sed -E 's|^(.*)-[0-9]+\.[0-9]+(\.[0-9]+)*\.nupkg$|\1|')
+            # Robust NuGet ID extraction (handles multi-dot names and prereleases)
+            id=$(echo "$pkgfile" | sed -E 's|(.*)-[0-9]+\.[0-9]+(\.[0-9]+)*(-[A-Za-z0-9\.\-]+)?\.nupkg|\1|')
             echo "🔍 Processing $id …"
-
-            all=$(curl -sL "https://api.nuget.org/v3-flatcontainer/${id,,}/index.json" | jq -r '.versions[]')
-
+  
+            # Fetch package versions from NuGet, with error handling
+            resp=$(curl -sL "https://api.nuget.org/v3-flatcontainer/${id,,}/index.json")
+            if ! echo "$resp" | jq . >/dev/null 2>&1; then
+              echo "  ⚠️  Could not fetch versions for $id (maybe not published yet). Skipping."
+              continue
+            fi
+  
+            all=$(echo "$resp" | jq -r '.versions[]')
             count=$(echo "$all" | wc -l)
             if [[ $count -le $KEEP ]]; then
               echo "  Nothing to prune ($count ≤ $KEEP)."
               continue
             fi
-
+  
             to_delete=$(echo "$all" | sort -Vr | tail -n +"$((KEEP+1))")
-
+  
             while read -r ver; do
+              if [[ -z "$ver" ]]; then continue; fi
               echo "  🗑️  Deleting $id $ver"
               dotnet nuget delete "$id" "$ver" \
                 --source https://api.nuget.org/v3/index.json \
@@ -160,6 +167,7 @@ jobs:
                 --api-key "$NUGET_API_KEY"
             done <<< "$to_delete"
           done
+
 
       - name: 🚀 Create GitHub Release
         uses: softprops/action-gh-release@v2
