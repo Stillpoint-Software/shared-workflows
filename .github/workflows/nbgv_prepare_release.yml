@@ -69,13 +69,8 @@ jobs:
       - name: 🔖 Resolve tag & SemVer
         id: version
         run: |
-          export PATH="$PATH:$HOME/.dotnet/tools"
-          tag=$(nbgv get-version -f '{GitTagName}')
-          semver=$(nbgv get-version -v SemVer2)
-          echo "tag=$tag"  >> $GITHUB_OUTPUT
-          echo "semver=$semver"  >> $GITHUB_OUTPUT
-          echo "Nerdbank tag: $tag"
-          echo "Nerdbank semver: $semver"
+          echo "tag=$(nbgv get-version -v GitTagName)"  >> "$GITHUB_OUTPUT"
+          echo "semver=$(nbgv get-version -v SemVer2)"  >> "$GITHUB_OUTPUT"
 
       - name: 🏷️ Bootstrap first tag when repo is tag-less
         run: |
@@ -91,10 +86,12 @@ jobs:
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
           nbgv prepare-release --versionIncrement ${{ inputs.increment }}
+          
           BR=$(git rev-parse --abbrev-ref HEAD)
           # Push the branch and tags so downstream jobs can see them
           git push --set-upstream origin "$BR"
           git push origin --tags
+         
           # Expose the branch name for downstream workflows
           echo "branch=$BR" >> $GITHUB_OUTPUT
 
