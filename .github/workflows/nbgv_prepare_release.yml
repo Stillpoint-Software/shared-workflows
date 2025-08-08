@@ -96,7 +96,7 @@ jobs:
           # Let Nerdbank.GitVersioning do the right thing for both flows:
           #  • On main/master/hotfix/* → patch bump, no "-alpha"  (stable)
           #  • On develop (or any other ref) → patch bump + "-alpha"
-          nbgv prepare-release --increment ${{inputs.increment}} --target{{inputs.target_branch}}
+          nbgv prepare-release --increment ${{inputs.increment}} --target ${{inputs.target_branch}}
 
           # Push the branch & tags so the Pack workflow can see them
           BR=$(git rev-parse --abbrev-ref HEAD)
