@@ -69,8 +69,15 @@ jobs:
       - name: 🔖 Resolve tag & SemVer
         id: version
         run: |
-          echo "tag=$(nbgv get-version -v GitTagName)"  >> "$GITHUB_OUTPUT"
-          echo "semver=$(nbgv get-version -v SemVer2)"  >> "$GITHUB_OUTPUT"
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          version_json=$(nbgv get-version -o json)
+          tag=$(echo "$version_json" | jq -r .GitTagName)
+          semver=$(echo "$version_json" | jq -r .SemVer2)
+        
+          echo "tag=$tag" >> $GITHUB_OUTPUT
+          echo "semver=$semver" >> $GITHUB_OUTPUT
+          echo "Nerdbank tag: $tag"
+          echo "Nerdbank semver: $semver"
 
       - name: 🏷️ Bootstrap first tag when repo is tag-less
         run: |
@@ -78,7 +85,9 @@ jobs:
             echo "No tags found – creating bootstrap tag 0.0.0 on the root commit"
             ROOT=$(git rev-list --max-parents=0 HEAD)
             git tag 0.0.0 "$ROOT"
-            git push origin 0.0.0 || echo "Warning: failed to push bootstrap tag (might be permissions or already exists)."
+            git push origin 0.0.0 || echo "::warning ::Could not push 0.0.0 tag – likely due to workflow file restrictions on first commit. This is non-fatal and can be ignored if subsequent tags work."
+          else
+            echo "At least one tag found, skipping bootstrap."
           fi
 
       - name: 🛠️ Prepare release
