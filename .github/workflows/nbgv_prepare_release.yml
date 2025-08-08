@@ -76,10 +76,10 @@ jobs:
       - name: 🏷️ Bootstrap first tag when repo is tag-less
         run: |
           if ! git tag --list | grep -q . ; then
-            echo "No tags found – creating bootstrap tag 0.0.0 on the root commit"
+            echo "No tags found – creating bootstrap tag 1.0.0 on the root commit"
             ROOT=$(git rev-list --max-parents=0 HEAD)
-            git tag 0.0.0 "$ROOT"
-            git push origin 0.0.0 || echo "::warning ::Could not push 0.0.0 tag – likely due to workflow file restrictions on first commit. This is non-fatal and can be ignored if subsequent tags work."
+            git tag 1.0.0 "$ROOT"
+            git push origin 1.0.0 || echo "::warning ::Could not push 1.0.0 tag – likely due to workflow file restrictions on first commit. This is non-fatal and can be ignored if subsequent tags work."
           else
             echo "At least one tag found, skipping bootstrap."
           fi
