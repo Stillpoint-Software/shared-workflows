@@ -15,7 +15,6 @@ on:
         default: false
     secrets:
       GH_TOKEN:
-        required: true
 
 permissions:
   contents: write
