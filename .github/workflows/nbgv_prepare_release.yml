@@ -72,10 +72,10 @@ jobs:
         id: version
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
-          semver=$(dotnet nbgv get-version --variable SemVer2)
+          semver=$(nbgv get-version --variable SemVer2)
           echo "semver=$semver" >> $GITHUB_OUTPUT
           echo "tag=v$semver"  >> $GITHUB_OUTPUT
-
+          
       - name: 🏷️ Bootstrap first tag when repo is tag-less
         run: |
           if ! git tag --list | grep -q . ; then
