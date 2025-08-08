@@ -68,16 +68,13 @@ jobs:
           dotnet tool install nbgv --version 3.8.38-alpha
           dotnet tool run nbgv --version
       
-      - name: 🔖 Resolve tag & SemVer (Nerdbank 3.x+)
+      - name: 🔖 Resolve SemVer
         id: version
         run: |
-          version_json=$(dotnet tool run nbgv get-version -o json)
-          tag=$(echo "$version_json" | jq -r .GitTagName)
-          semver=$(echo "$version_json" | jq -r .SemVer2)
-          echo "tag=$tag" >> $GITHUB_OUTPUT
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          semver=$(dotnet nbgv get-version --variable SemVer2)
           echo "semver=$semver" >> $GITHUB_OUTPUT
-          echo "Nerdbank tag: $tag"
-          echo "Nerdbank semver: $semver"
+          echo "tag=v$semver"  >> $GITHUB_OUTPUT
 
       - name: 🏷️ Bootstrap first tag when repo is tag-less
         run: |
