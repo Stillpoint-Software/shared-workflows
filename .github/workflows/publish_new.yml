@@ -24,6 +24,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    - name: Release Configuration
+      if: ${{ env.BRANCH_NAME == 'main' && (github.event.release.prerelease == false || github.event_name == 'workflow_dispatch') }}
+      run: |
+          echo "BUILD_CONFIGURATION=Release" >> $GITHUB_ENV
+    
+    - name: Debug Configuration
+      if: ${{ (github.event.release.prerelease || github.event_name == 'workflow_dispatch') }}
+      run: |
+          echo "BUILD_CONFIGURATION=Debug" >> $GITHUB_ENV
+
+    - name: Check Build Configuration
+      if: ${{ env.BUILD_CONFIGURATION == '' }}
+      run: |
+        echo "Invalid Build Configuration"
+        exit 1
+
     - name: Checkout Code
       uses: actions/checkout@v4
       with:
@@ -43,6 +59,13 @@ jobs:
         nbgv get-version --format json > nbgv.json
         version=$(jq -r .NuGetPackageVersion nbgv.json)
         echo "version_tag=$version" >> $GITHUB_ENV
+
+    - name: Get version from version.json
+      id: get_version
+      run: |
+        version=$(jq -r .version version.json)
+        echo "version=$version" >> $GITHUB_OUTPUT
+
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
