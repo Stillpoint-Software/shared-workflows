@@ -62,18 +62,18 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: 🔖 Install Nerdbank.GitVersioning tool (if needed)
+      - name: Install Nerdbank.GitVersioning tool (3.8.38-alpha)
         run: |
-          dotnet tool update -g nbgv --version 3.8.38-alpha || dotnet tool install -g nbgv --version 3.8.38-alpha
-
-      - name: 🔖 Resolve tag & SemVer
+          dotnet tool uninstall -g nbgv || true
+          dotnet tool install -g nbgv --version 3.8.38-alpha
+          $HOME/.dotnet/tools/nbgv --version
+      
+      - name: 🔖 Resolve tag & SemVer (Nerdbank 3.x+)
         id: version
         run: |
-          export PATH="$PATH:$HOME/.dotnet/tools"
-          version_json=$(nbgv get-version -o json)
+          version_json=$($HOME/.dotnet/tools/nbgv get-version -o json)
           tag=$(echo "$version_json" | jq -r .GitTagName)
           semver=$(echo "$version_json" | jq -r .SemVer2)
-        
           echo "tag=$tag" >> $GITHUB_OUTPUT
           echo "semver=$semver" >> $GITHUB_OUTPUT
           echo "Nerdbank tag: $tag"
