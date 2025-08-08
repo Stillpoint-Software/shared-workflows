@@ -66,7 +66,7 @@ jobs:
         id: version
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
-          echo "tag=$(nbgv get-version -v GitTagName)"  >> "$GITHUB_OUTPUT"
+          echo "tag=$(nbgv get-version -f '{GitTagName}')"  >> "$GITHUB_OUTPUT"
           echo "semver=$(nbgv get-version -v SemVer2)"  >> "$GITHUB_OUTPUT"
 
       - name: 🏷️  Bootstrap first tag when repo is tag-less
