@@ -71,17 +71,21 @@ jobs:
           export PATH="$PATH:$HOME/.dotnet/tools"
           semver=$(nbgv get-version --variable SemVer2)
           echo "semver=$semver" >> $GITHUB_OUTPUT
-          echo "tag=v$semver"  >> $GITHUB_OUTPUT
           
-      - name: 🏷️ Bootstrap first tag when repo is tag-less
+      - name: 🏷️  Bootstrap first tag when repo is tag-less
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           if ! git tag --list | grep -q . ; then
-            echo "No tags found – creating bootstrap tag 1.0.0 on the root commit"
-            ROOT=$(git rev-list --max-parents=0 HEAD)
-            git tag 1.0.0 "$ROOT"
-            git push origin 1.0.0 || echo "::warning ::Could not push 1.0.0 tag – likely due to workflow file restrictions on first commit. This is non-fatal and can be ignored if subsequent tags work."
+            version=$(jq -r .version version.json)
+            echo "No tags found – creating bootstrap tag $version on HEAD"
+            git config user.name "github-actions"
+            git config user.email "github-actions@github.com"
+            git tag "$version" HEAD
+            git push https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git "$version"
           else
-            echo "At least one tag found, skipping bootstrap."
+            echo "Tag(s) already exist – skipping bootstrap tag"
           fi
 
       - name: 🛠️ Prepare release
