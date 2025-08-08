@@ -59,7 +59,7 @@ jobs:
     - name: Commit and Push Version Change
       run: |
         # Update version.json with the new version_tag
-        jq --arg ver "${{ nbgv.version_tag }}" '.version = $ver' version.json > tmp_version.json && mv tmp_version.json version.json
+        jq --arg ver "${{ env.version_tag }}" '.version = $ver' version.json > tmp_version.json && mv tmp_version.json version.json
         
         git config --global user.name '${{ github.triggering_actor }}'
         git config --global user.email '${{ github.triggering_actor }}@users.noreply.github.com'
@@ -67,16 +67,16 @@ jobs:
         if git diff --cached --quiet; then
           echo "No version change to commit."
         else
-          git commit -m "Update version to ${{ nbgv.version_tag }} for release."
+          git commit -m "Update version to ${{ env.version_tag }} for release."
           git push
         fi
 
     - name: Create Release
       run: |
-        echo "Creating release ${{ nbgv.version_tag }}"
-        gh release create ${{ nbgv.version_tag }} \
+        echo "Creating release ${{ env.version_tag }}"
+        gh release create ${{ env.version_tag }} \
           --target ${{ github.ref_name }} \
-          --title ${{ nbgv.version_tag }} \
+          --title ${{ env.version_tag }} \
           --generate-notes \
           $(if [[ "${{ inputs.is_draft }}" == "true" ]]; then echo "--draft"; fi) \
           $(if [[ "${{ inputs.is_prerelease }}" == "true" ]]; then echo "--prerelease"; fi) \
