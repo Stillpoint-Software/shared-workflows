@@ -62,11 +62,8 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Setup Nerdbank.GitVersioning as local tool
-        run: |
-          dotnet new tool-manifest --force
-          dotnet tool install nbgv --version 3.8.38-alpha
-          dotnet tool run nbgv --version
+      - name: Install Nerdbank.GitVersioning tool (3.8.38-alpha)
+        run: dotnet tool update -g nbgv --version 3.8.38-alpha || dotnet tool install -g nbgv --version 3.8.38-alpha
       
       - name: 🔖 Resolve SemVer
         id: version
