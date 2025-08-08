@@ -87,16 +87,20 @@ jobs:
       - name: 🛠️ Prepare release
         id: prep_release
         run: |
-          export PATH="$PATH:$HOME/.dotnet/tools"
-          nbgv prepare-release --versionIncrement ${{ inputs.increment }}
-          
+          set -euo pipefail
+
+          # Let Nerdbank.GitVersioning do the right thing for both flows:
+          #  • On main/master/hotfix/* → patch bump, no "-alpha"  (stable)
+          #  • On develop (or any other ref) → patch bump + "-alpha"
+          nbgv prepare-release 
+
+          # Push the branch & tags so the Pack workflow can see them
           BR=$(git rev-parse --abbrev-ref HEAD)
-          # Push the branch and tags so downstream jobs can see them
           git push --set-upstream origin "$BR"
           git push origin --tags
-         
+
           # Expose the branch name for downstream workflows
-          echo "branch=$BR" >> $GITHUB_OUTPUT
+          echo "branch=$BR" >> "$GITHUB_OUTPUT"
 
       - name: 📝 Generate release notes
         id: changelog
