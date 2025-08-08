@@ -62,20 +62,28 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: 🔖 Install Nerdbank.GitVersioning tool (if needed)
+        run: |
+          dotnet tool update -g nbgv --version 3.8.38-alpha || dotnet tool install -g nbgv --version 3.8.38-alpha
+
       - name: 🔖 Resolve tag & SemVer
         id: version
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
-          echo "tag=$(nbgv get-version -f '{GitTagName}')"  >> "$GITHUB_OUTPUT"
-          echo "semver=$(nbgv get-version -v SemVer2)"  >> "$GITHUB_OUTPUT"
+          tag=$(nbgv get-version -f '{GitTagName}')
+          semver=$(nbgv get-version -v SemVer2)
+          echo "tag=$tag"  >> $GITHUB_OUTPUT
+          echo "semver=$semver"  >> $GITHUB_OUTPUT
+          echo "Nerdbank tag: $tag"
+          echo "Nerdbank semver: $semver"
 
-      - name: 🏷️  Bootstrap first tag when repo is tag-less
+      - name: 🏷️ Bootstrap first tag when repo is tag-less
         run: |
           if ! git tag --list | grep -q . ; then
             echo "No tags found – creating bootstrap tag 0.0.0 on the root commit"
             ROOT=$(git rev-list --max-parents=0 HEAD)
             git tag 0.0.0 "$ROOT"
-            git push origin 0.0.0
+            git push origin 0.0.0 || echo "Warning: failed to push bootstrap tag (might be permissions or already exists)."
           fi
 
       - name: 🛠️ Prepare release
@@ -83,14 +91,12 @@ jobs:
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
           nbgv prepare-release --versionIncrement ${{ inputs.increment }}
-
-          # Push the branch & tags so downstream jobs can see them
           BR=$(git rev-parse --abbrev-ref HEAD)
+          # Push the branch and tags so downstream jobs can see them
           git push --set-upstream origin "$BR"
           git push origin --tags
-
           # Expose the branch name for downstream workflows
-          echo "branch=$BR" >> "$GITHUB_OUTPUT"
+          echo "branch=$BR" >> $GITHUB_OUTPUT
 
       - name: 📝 Generate release notes
         id: changelog
