@@ -112,27 +112,25 @@ jobs:
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
 
-      - name: 📝 Read release notes
-        id: notes
+     # 👇 Get the version from Nerdbank.GitVersioning
+      - name: Get Nerdbank Version
+        id: nbgv
         run: |
-          if [[ -f release-notes.md ]]; then
-            echo "body<<EOF" >> $GITHUB_OUTPUT
-            cat release-notes.md >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          else
-            echo "body=No release notes found" >> $GITHUB_OUTPUT
-          fi
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          version=$(nbgv get-version --variable SemVer2)
+          echo "semver=$version" >> $GITHUB_OUTPUT
 
+      # 👇 Create the GitHub Release
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag_name }}
-          name: Release ${{ inputs.tag_name }}
+          tag_name: ${{ steps.nbgv.outputs.semver }}
+          name: Release ${{ steps.nbgv.outputs.semver }}
           draft: false
-          prerelease: ${{ contains(inputs.tag_name, '-') }}
-          body: ${{ steps.notes.outputs.body }}
+          prerelease: ${{ contains(steps.nbgv.outputs.semver, '-') }}
+          files: ./artifacts/*.nupkg
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🧹 Prune old package versions
         if: ${{ inputs.prune_after_push }}
