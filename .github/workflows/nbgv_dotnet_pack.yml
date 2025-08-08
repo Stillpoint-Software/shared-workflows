@@ -125,7 +125,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.nbgv.outputs.semver }}
-          name: Release ${{ steps.nbgv.outputs.semver }}
+          name: ${{ steps.nbgv.outputs.semver }}
           draft: false
           prerelease: ${{ contains(steps.nbgv.outputs.semver, '-') }}
           files: ./artifacts/*.nupkg
