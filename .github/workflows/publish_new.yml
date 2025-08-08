@@ -30,7 +30,7 @@ jobs:
           echo "BUILD_CONFIGURATION=Release" >> $GITHUB_ENV
     
     - name: Debug Configuration
-      if: ${{ (github.event.release.prerelease || github.event_name == 'workflow_dispatch') }}
+      if: ${{ github.event.release.prerelease }}
       run: |
           echo "BUILD_CONFIGURATION=Debug" >> $GITHUB_ENV
 
@@ -66,22 +66,19 @@ jobs:
         version=$(jq -r .version version.json)
         echo "version=$version" >> $GITHUB_OUTPUT
 
-
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '9.0.x'
 
-    - name: Restore dependencies
-      run: dotnet restore
+    - name: Restore Dependencies
+      run: dotnet restore ${{ env.SOLUTION_NAME }}
 
     - name: Build
-      run: dotnet build --no-restore --configuration Release
+      run: dotnet build --no-restore --configuration ${{ env.BUILD_CONFIGURATION }} ${{ env.SOLUTION_NAME }}
 
     - name: Test
-      run: dotnet test --no-build --configuration Release --verbosity normal
+      run: dotnet test --no-build --verbosity normal --configuration ${{ env.BUILD_CONFIGURATION }} ${{ env.SOLUTION_NAME }}
 
     - name: Pack and Push
-      run: dotnet pack --no-build --configuration ${{ inputs.BUILD_CONFIGURATION }} -p:PackageOutputPath=../../output -p:PackageVersion=${{ env.version_tag }} -p:PackageSource='${{ env.NUGET_SOURCE }}' -p:PushAfterPack=true -p:PackageApiKey='${{ secrets.NUGET_API_KEY }}'
-
- 
+      run: dotnet pack --no-build --configuration ${{ env.BUILD_CONFIGURATION }} -p:PackageOutputPath=../../output --version-suffix "${{ env.VERSION_SUFFIX }}" -p:PackageSource='${{ env.NUGET_SOURCE }}' -p:PushAfterPack=true -p:PackageApiKey='${{ secrets.NUGET_API_KEY }}'
