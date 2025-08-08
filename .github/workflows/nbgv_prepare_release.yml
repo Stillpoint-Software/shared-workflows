@@ -7,19 +7,23 @@ on:
         description: "Branch or tag to release from"
         type: string
         required: true
+        default: main
       increment:
         description: "Version increment (major | minor | revision)"
         type: string
         required: true
+        default: patch
       version_file_path:
         description: "Path to version.json"
         type: string
         required: false
         default: version.json
+
     secrets:
       GH_TOKEN:
         description: "GitHub token"
         required: false
+
     outputs:
       tag_name:
         description: "Git tag from Nerdbank"
@@ -34,45 +38,59 @@ on:
 jobs:
   prep:
     runs-on: ubuntu-latest
+
     outputs:
-      tag: ${{ steps.version.outputs.tag }}
-      semver: ${{ steps.version.outputs.semver }}
       release_branch: ${{ steps.prep_release.outputs.branch }}
+      tag:            ${{ steps.version.outputs.tag }}
+      semver:         ${{ steps.version.outputs.semver }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: 📥 Checkout target
+        uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch }}
           fetch-depth: 0
           token: ${{ secrets.GH_TOKEN || github.token }}
 
-      - uses: actions/setup-dotnet@v4
+      - name: ⚙️ Setup .NET 9.x
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
-
-      - name: Install Nerdbank.GitVersioning tool (3.8.38-alpha)
-        run: dotnet tool update -g nbgv --version 3.8.38-alpha || dotnet tool install -g nbgv --version 3.8.38-alpha
 
       - name: 📋 Configure Git identity
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-      - name: Get Nerdbank Version
+
+      - name: 🔖 Resolve tag & SemVer
         id: version
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
-          semver=$(nbgv get-version --variable SemVer2)
-          echo "semver=$semver" >> $GITHUB_OUTPUT
-          echo "tag=v$semver"  >> $GITHUB_OUTPUT
+          echo "tag=$(nbgv get-version -v GitTagName)"  >> "$GITHUB_OUTPUT"
+          echo "semver=$(nbgv get-version -v SemVer2)"  >> "$GITHUB_OUTPUT"
 
-      - name: Prepare release
+      - name: 🏷️  Bootstrap first tag when repo is tag-less
+        run: |
+          if ! git tag --list | grep -q . ; then
+            echo "No tags found – creating bootstrap tag 0.0.0 on the root commit"
+            ROOT=$(git rev-list --max-parents=0 HEAD)
+            git tag 0.0.0 "$ROOT"
+            git push origin 0.0.0
+          fi
+
+      - name: 🛠️ Prepare release
         id: prep_release
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
           nbgv prepare-release --versionIncrement ${{ inputs.increment }}
-          BRANCH=$(git rev-parse --abbrev-ref HEAD)
-          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+
+          # Push the branch & tags so downstream jobs can see them
+          BR=$(git rev-parse --abbrev-ref HEAD)
+          git push --set-upstream origin "$BR"
+          git push origin --tags
+
+          # Expose the branch name for downstream workflows
+          echo "branch=$BR" >> "$GITHUB_OUTPUT"
 
       - name: 📝 Generate release notes
         id: changelog
@@ -80,7 +98,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
 
-      # 🔒 Always create & upload the notes so the Pack job can grab them  
       - name: 💾 Save notes to file
         if: always()
         run: |
