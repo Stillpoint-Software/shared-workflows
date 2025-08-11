@@ -129,15 +129,12 @@ jobs:
           NOTES="${{ steps.notes.outputs.notes_file }}"
 
           FLAGS=()
+          FLAGS+=(--draft)                  # ← always create as DRAFT
           [[ -n "$PRE" ]] && FLAGS+=(--prerelease)
-          if [[ -z "$PRE" && ( "$BR" == "main" || "$BR" =~ ^v[0-9]+\.[0-9]+$ ) ]]; then
-            FLAGS+=(--latest)
-          fi
 
-          echo "Creating release ${TAG} from '${BR}'"
+          echo "Creating DRAFT release ${TAG} from '${BR}'"
           if [[ -n "$NOTES" ]]; then
             gh release create "${TAG}" --title "${TAG}" --notes-file "$NOTES" "${FLAGS[@]}"
           else
             gh release create "${TAG}" --title "${TAG}" --generate-notes "${FLAGS[@]}"
           fi
-
