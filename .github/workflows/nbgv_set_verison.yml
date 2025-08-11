@@ -1,3 +1,3544 @@
+Skip to content
+Chat history
+You said:
+hey Bella,  I'm still working on the nerdbank.gitversioning.  Can you review this and list the steps to implement
+ChatGPT said:
+
+Absolutely, Annette! Here’s a clean, repo-ready checklist to get Nerdbank.GitVersioning (NBGV) wired up with your .NET 9 solution and GitHub Actions—tailored to your “-alpha on non-main, clean on main” setup and your shared workflows.
+1) Add NBGV to the build
+
+Directory.Build.props (root or src/):
+
+<Project>
+  <ItemGroup>
+    <PackageReference Include="Nerdbank.GitVersioning" Version="3.8.38-alpha" PrivateAssets="all" />
+  </ItemGroup>
+</Project>
+
+2) Create/adjust version.json
+
+Root version.json (use your policy preferences):
+
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/Nerdbank.GitVersioning/main/src/NerdBank.GitVersioning/version.schema.json",
+  "version": "1.0.0",
+  "publicReleaseRefSpec": [
+    "^refs/heads/main$",
+    "^refs/heads/master$",
+    "^refs/heads/revision/",
+    "^refs/tags/v"
+  ],
+  "release": {
+    "branchName": "release/{version}",
+    "branchPolicies": {
+      "main": { "prerelease": "" },
+      "master": { "prerelease": "" },
+      "*": {
+        "increment": "patch",
+        "prerelease": "-alpha"
+      }
+    }
+  }
+}
+
+    Non-main branches automatically get -alpha.
+
+    main/master produce clean versions.
+
+3) Ensure NuGet packaging metadata (once)
+
+If you pack from API (or any packable project), make sure license/etc. are included:
+
+<PropertyGroup>
+  <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+  <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+</PropertyGroup>
+<ItemGroup>
+  <None Include="$(SolutionDir)LICENSE.txt" Pack="true" PackagePath="" />
+</ItemGroup>
+
+4) (One-time) Bootstrap a tag
+
+If the repo has no tags, do this locally to avoid GH App permission weirdness:
+
+git fetch --all
+git tag v1.0.0 -m "bootstrap"
+git push origin v1.0.0
+
+(This prevents the “No tags found – creating 0.0.0” and the GitHub App workflows permission issue you hit.)
+5) Install the CLI (dev convenience)
+
+dotnet tool install -g nbgv --version 3.8.38-alpha
+
+Useful commands:
+
+nbgv get-version
+nbgv prepare-release --versionIncrement (major|minor|patch)
+
+6) Prepare-Release workflow (shared or local)
+
+    Trigger manually with input major|minor|patch.
+
+    Run dotnet nbgv prepare-release --versionIncrement <choice>.
+
+    Push the release/X.Y branch; open a draft PR.
+
+If you’re calling your shared workflow:
+
+name: Prepare Release
+on:
+  workflow_dispatch:
+    inputs:
+      increment:
+        type: choice
+        options: [major, minor, patch]
+        default: patch
+jobs:
+  prepare:
+    uses: <owner>/<shared-repo>/.github/workflows/nbgv_prepare_release.yml@main
+    with:
+      increment: ${{ github.event.inputs.increment }}
+    permissions:
+      contents: write
+      pull-requests: write
+
+7) Build/Pack workflow (CI)
+
+    On PRs/commits: restore → build → test.
+
+    Let NBGV set versions at build.
+
+    Use PublicRelease=true only for main/release to strip -alpha.
+
+Skeleton (or call your shared one):
+
+name: Build & Pack
+on:
+  push:
+    branches: [ main, develop, feature/**, release/** ]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build_pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '9.0.x' }
+
+      - name: Restore
+        run: dotnet restore Hyperbee.Templating.sln
+
+      - name: Build
+        run: dotnet build --no-restore -c Debug Hyperbee.Templating.sln
+
+      - name: Test
+        run: dotnet test --no-build -c Debug --logger "trx;LogFileName=test.trx" --results-directory ./artifacts/tests
+
+      - name: Decide public release
+        id: rel
+        run: |
+          if [[ "${{ github.ref_name }}" == "main" || "${{ github.ref_name }}" == release/* ]]; then
+            echo "flag=-p:PublicRelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "flag=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Pack
+        run: |
+          dotnet pack ./src/PostgresTest.Api/PostgresTest.Api.csproj \
+            -c $([[ "${{ github.ref_name }}" == "main" ]] && echo Release || echo Debug) \
+            --no-build --no-restore \
+            -o ./artifacts ${{ steps.rel.outputs.flag }}
+
+(If you have your shared nbgv_dotnet_pack.yml, just call it and pass solution/project + config.)
+8) Release-Publish workflow
+
+    Trigger on GitHub Release published.
+
+    Pack with -p:PublicRelease=true.
+
+    Push to NuGet/GitHub Packages as needed.
+
+name: Publish
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '9.0.x' }
+
+      - name: Pack (Public)
+        run: |
+          dotnet pack ./src/PostgresTest.Api/PostgresTest.Api.csproj \
+            -c Release --no-build --no-restore -o ./artifacts \
+            -p:PublicRelease=true
+
+      # - name: Push to NuGet
+      #   run: dotnet nuget push "./artifacts/*.nupkg" --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
+
+9) How you cut a release (human runbook)
+
+    Branch is green on develop.
+
+    Manually run Prepare Release → choose major/minor/patch.
+
+    Review the PR from release/X.Y → merge to main.
+
+    Create a GitHub Release with tag vX.Y.Z (or run nbgv tag then publish the release).
+
+    The Publish workflow packs with PublicRelease=true and pushes your packages.
+
+10) Common gotchas (from your errors)
+
+    “No tags found – creating 0.0.0 / workflows permission”: push the first tag locally (v1.0.0) with your own user. After that, your bot token works fine. If you must do it in CI once, grant permissions: workflows: write just for the bootstrap step, then remove it.
+
+    License not in package: ensure LICENSE.txt is packed via <None ... Pack="true" />.
+
+    Want -alpha only off main/master: keep the branchPolicies as above; don’t set PublicRelease=true outside main/release.
+
+    Manual bumping: use nbgv prepare-release --versionIncrement X to advance version.json and create release/{version} automatically.
+
+If you paste your current YAMLs/version.json here, I’ll compare line-by-line and tweak them so this flow “just works.”
+You said:
+Bella,  can you review https://dotnet.github.io/Nerdbank.GitVersioning/docs and tell me how the version.json file gets updated?
+ChatGPT said:
+
+Short answer: NBGV does not rewrite version.json on every build. The file changes only when you or the nbgv CLI change it—and those changes take effect once you commit them.
+
+Here are the ways version.json gets updated (from the docs):
+
+    You create it (or NBGV does)
+
+    nbgv install creates an initial version.json and wires up the package.
+    dotnet.github.io
+
+    You edit it by hand, then commit
+
+    Edits don’t fully apply until the change is committed (push not required).
+    dotnet.github.io
+
+    nbgv set-version
+
+    Updates the “version stamp” (i.e., writes a new base version into version.json); you commit the change.
+    dotnet.github.io
+
+    nbgv prepare-release (the big one)
+
+    Reads your current version.json.
+
+    Creates a release branch (e.g., release/v1.2).
+
+    On the release branch: removes or replaces the prerelease tag in version.json.
+
+    Back on main: increments the version per your release.versionIncrement (default minor) and sets the first unstable tag (default alpha).
+
+    Commits those changes (and even merges the release branch back to main to pre-resolve the version.json conflict).
+    dotnet.github.io
+
+    nbgv tag
+
+    Creates a git tag based on the version in version.json; it does not edit the file.
+    dotnet.github.io
+
+Handy snippet you’ll actually run:
+
+# bump via CLI
+nbgv set-version 1.4.0
+git commit -am "Set version to 1.4.0"
+
+# cut a release (updates version.json on both branches)
+nbgv prepare-release --versionIncrement minor   # or major | build
+git push --all && git push --tags
+
+If you want, paste your current version.json and I’ll tell you exactly what prepare-release will do to it on main vs. your release branch.
+You said:
+how does this happen using the .net eosystems
+ChatGPT said:
+
+Gotcha, Annette. In the .NET ecosystem, version.json only changes when you (or CI running your commands) change it. The rest of the time NBGV just reads it at build and stamps your assemblies/packages via MSBuild. Here’s the practical flow:
+How version.json gets updated in .NET
+
+    Create it (one-time)
+
+    Install the CLI and initialize in your repo:
+
+    dotnet tool install -g nbgv
+    nbgv install
+    git commit -am "Add NBGV"
+
+    nbgv install creates version.json and adds the package reference in Directory.Build.props.
+    dotnet.github.io
+
+    Manual edits (commit required)
+
+    You can edit version.json by hand; changes take effect only after you commit.
+    dotnet.github.io
+
+    CLI commands that write version.json
+
+    Set an exact version:
+
+nbgv set-version 1.3.0
+git commit -am "Set version to 1.3.0"
+
+(set-version is a built-in subcommand.)
+dotnet.github.io
+
+Prepare a release (the normal way):
+
+    nbgv prepare-release --versionIncrement minor   # or major|build
+
+    This:
+
+        Creates a release branch (e.g., release/v1.2),
+
+        Removes/replaces the prerelease tag on the release branch,
+
+        Bumps the main branch to the next version (defaults to minor) and sets the first unstable tag (defaults to alpha), and
+
+        Commits those changes (and resolves the typical version.json merge for you).
+        dotnet.github.io
+
+        You can customize branchName, versionIncrement, and firstUnstableTag under release in version.json.
+        dotnet.github.io
+
+    What happens at build time (no file writes)
+
+    During dotnet build/pack, NBGV’s MSBuild targets compute the version and inject:
+
+        AssemblyVersion, FileVersion, InformationalVersion,
+
+        A ThisAssembly class with version constants.
+        No edits to version.json occur here.
+        dotnet.github.io
+
+    CI usage (GitHub Actions/Azure Pipelines)
+
+    Ensure full history so NBGV can compute versions:
+
+    - uses: actions/checkout@v4
+      with: { fetch-depth: 0 }
+
+    dotnet.github.io
+
+    Optionally use the official nbgv action/CLI to expose version variables or to run prepare-release in CI.
+    dotnet.github.io
+
+    Release refs produce “clean” versions
+
+    If you set publicReleaseRefSpec, builds from those refs drop the -g<commit> suffix so your released version is friendly. (Again, this doesn’t write version.json; it just affects computed output.)
+    dotnet.github.io
+
+If you want, paste your current version.json, and I’ll tell you exactly what nbgv prepare-release will change on main vs. the release branch, given your release.* settings.
+You said:
+here is my version.json file:
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/Nerdbank.GitVersioning/main/src/NerdBank.GitVersioning/version.schema.json",
+  "version": "1.0",
+  "publicReleaseRefSpec": [
+    "^refs/heads/main$", // main releases ship from main
+    "^refs/heads/v\\d+\\.\\d+$" // servicing releases ship from vX.Y branches
+  ],
+  "release": {
+    "branchName": "release/v{version}",
+    "versionIncrement": "minor",
+    "firstUnstableTag": "alpha"
+  }
+}
+ChatGPT said:
+
+Great—here’s exactly what your version.json does, what nbgv prepare-release will change, and two small fixes I recommend.
+What your settings do now
+
+{
+  "version": "1.0",
+  "publicReleaseRefSpec": [
+    "^refs/heads/main$",
+    "^refs/heads/v\\d+\\.\\d+$"
+  ],
+  "release": {
+    "branchName": "release/v{version}",
+    "versionIncrement": "minor",
+    "firstUnstableTag": "alpha"
+  }
+}
+
+    Base version: 1.0 (two-part). NBGV will compute a full SemVer for builds (e.g., 1.0.0, or 1.1.0-alpha later).
+
+    Public release refs: builds from main (and branches named vX.Y) are treated as “public release” (no +g<commit>/height suffix).
+
+    Prepare-release behavior (run from main):
+
+        Creates release/v1.0 from main.
+
+        On release/v1.0: removes prerelease (stabilizes at 1.0.0).
+
+        On main: bumps to 1.1.0-alpha because versionIncrement=minor and firstUnstableTag=alpha.
+
+        You tag the final release (typically v1.0.0) when you’re ready.
+
+Important mismatch to fix
+
+    You said release branches are named release/v{version}, but your publicReleaseRefSpec allows vX.Y (no release/ prefix).
+    Result: builds from your release branch won’t be treated as public releases.
+
+Fix (choose one):
+
+A) Keep your current branch name and update the spec (recommended)
+
+"publicReleaseRefSpec": [
+  "^refs/heads/main$",
+- "^refs/heads/v\\d+\\.\\d+$"
++ "^refs/heads/release/v\\d+\\.\\d+$"
+]
+
+B) Change the release branch name to match your spec
+
+- "branchName": "release/v{version}"
++ "branchName": "v{version}"
+
+What you’ll see in practice (after the fix)
+
+    Run on main:
+
+    nbgv prepare-release         # uses your default: versionIncrement=minor
+
+        New branch release/v1.0 has 1.0.0 (stable).
+
+        main becomes 1.1.0-alpha.
+
+    Builds:
+
+        From release/v1.0 (with the fixed publicReleaseRefSpec): produce clean, “public” versions (no +g<commit>).
+
+        From main while it’s 1.1.0-alpha: pre-release versions (still considered public by your spec because main is listed, so they won’t get the +g<commit> suffix).
+
+If you want “alpha only on non-main”
+
+Right now main becomes 1.1.0-alpha after you cut release/v1.0. If you prefer main to always be clean, use a develop branch for day-to-day work and run prepare-release from develop instead. Then:
+
+    develop → 1.1.0-alpha
+
+    release/v1.0 → stable 1.0.0
+
+    main → only gets merges/tags you ship
+
+(Alternatively, you can move to a branchPolicies setup, but using a develop branch is the simplest and most predictable.)
+Quick runbook with your file
+
+# one-time
+dotnet tool install -g nbgv
+nbgv install
+git commit -am "Add NBGV"
+
+# before your first release, make sure there's at least one tag (optional but helpful)
+git tag v1.0.0 -m "bootstrap" && git push --tags
+
+# cut a release from main
+nbgv prepare-release                     # creates release/v1.0, bumps main to 1.1.0-alpha
+git push --all
+
+# build & validate on release/v1.0, then tag when ready
+git checkout release/v1.0
+# … run CI, manual checks …
+nbgv tag                                  # creates v1.0.0 tag on the release commit
+git push --tags
+
+Want me to flip the publicReleaseRefSpec for you and hand you a ready-to-paste JSON? Happy to—just say whether you prefer A (keep release/v{version}) or B (rename to v{version}).
+You said:
+B
+ChatGPT said:
+
+Perfect—going with B (rename the release branch to v{version}).
+
+Here’s your updated version.json (paste this in place):
+
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/Nerdbank.GitVersioning/main/src/NerdBank.GitVersioning/version.schema.json",
+  "version": "1.0",
+  "publicReleaseRefSpec": [
+    "^refs/heads/main$",
+    "^refs/heads/v\\d+\\.\\d+$"
+  ],
+  "release": {
+    "branchName": "v{version}",
+    "versionIncrement": "minor",
+    "firstUnstableTag": "alpha"
+  }
+}
+
+What happens now when you run:
+
+nbgv prepare-release          # from main
+
+    Creates v1.0 from main.
+
+    On v1.0: stabilizes to 1.0.0 (no prerelease).
+
+    On main: bumps to 1.1.0-alpha (because versionIncrement=minor, firstUnstableTag=alpha).
+
+    Builds from main and vX.Y are treated as public release refs (no +g<commit> metadata).
+
+Quick release runbook:
+
+# cut the release
+nbgv prepare-release
+git push --all
+
+# validate on v1.0 then tag the release
+git checkout v1.0
+nbgv tag                 # creates v1.0.0
+git push --tags
+
+If you want main to stay clean (no -alpha) after cutting the release, we can switch to a develop-based flow or add branchPolicies. But with your current setup, this is ready to go with the new v{version} branch naming.
+You said:
+here is my github to create a release.  Please review and make sure we are using the nbgv cli:
+name: Old Create Release
+
+on:
+  workflow_call:
+    inputs:
+      is_prerelease:
+        description: 'Create a prerelease:'
+        type: boolean
+        required: true
+        default: false
+      is_draft:
+        description: 'Set as a draft:'
+        type: boolean
+        required: true
+        default: false
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+env:
+  ALLOW_PRERELEASE: ${{ startsWith(github.ref, 'refs/heads/develop') || startsWith(github.ref, 'refs/heads/hotfix/') }}
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check For Valid Prerelease
+      if: ${{ ( env.ALLOW_PRERELEASE == 'true' && inputs.is_prerelease == 'false' ) || ( github.ref == 'refs/heads/main' && inputs.is_prerelease == 'true' ) }}
+      run: |
+        echo "Prereleases should not be triggered on the main branch, please use development or hotfix"
+        exit 1
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Ensure Nerdbank.GitVersioning tool is installed
+      run: |
+        if ! dotnet tool list -g | grep -q nbgv; then
+          dotnet tool install --global nbgv
+        else
+          dotnet tool update --global nbgv
+        fi
+
+    - name: Get version from Nerdbank.GitVersioning
+      id: nbgv
+      run: |
+        nbgv get-version --format json > nbgv.json
+        version=$(jq -r .NuGetPackageVersion nbgv.json)
+        echo "version_tag=$version" >> $GITHUB_ENV
+
+    - name: Commit and Push Version Change
+      run: |
+        # Update version.json with the new version_tag
+        jq --arg ver "${{ env.version_tag }}" '.version = $ver' version.json > tmp_version.json && mv tmp_version.json version.json
+        
+        git config --global user.name '${{ github.triggering_actor }}'
+        git config --global user.email '${{ github.triggering_actor }}@users.noreply.github.com'
+        git add version.json
+        if git diff --cached --quiet; then
+          echo "No version change to commit."
+        else
+          git commit -m "Update version to ${{ env.version_tag }} for release."
+          git push
+        fi
+
+    - name: Create Release
+      run: |
+        echo "Creating release ${{ env.version_tag }}"
+        gh release create ${{ env.version_tag }} \
+          --target ${{ github.ref_name }} \
+          --title ${{ env.version_tag }} \
+          --generate-notes \
+          $(if [[ "${{ inputs.is_draft }}" == "true" ]]; then echo "--draft"; fi) \
+          $(if [[ "${{ inputs.is_prerelease }}" == "true" ]]; then echo "--prerelease"; fi) \
+          $(if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then echo "--latest"; fi)
+      env:
+        GH_TOKEN: ${{ secrets.GH_TOKEN }}
+ChatGPT said:
+
+Great share—this is close, but there are two big things to fix:
+
+    Don’t write a computed version back into version.json.
+    That file is your policy/baseline, not a per-build artifact. It should only change via human edits or nbgv prepare-release/set-version, not during “create release.” (Use the CLI to read the version and tag the commit.)
+    Matteo's Blog
+
+    Create the tag from NBGV output, then create the GitHub Release for that tag.
+    NBGV is designed to compute the version and even tag a commit with its computed version; we’ll either call nbgv tag or derive the tag string and git tag it ourselves.
+    NuGet
+
+Below is a cleaned-up workflow that keeps your inputs, uses the nbgv CLI, and avoids mutating version.json.
+
+name: Create Release
+
+on:
+  workflow_call:
+    inputs:
+      is_prerelease:
+        description: 'Create a prerelease'
+        type: boolean
+        required: true
+        default: false
+      is_draft:
+        description: 'Set as a draft'
+        type: boolean
+        required: true
+        default: false
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+env:
+  # Allow prerelease only from develop/hotfix; never from main
+  ALLOW_PRERELEASE: ${{ startsWith(github.ref, 'refs/heads/develop') || startsWith(github.ref, 'refs/heads/hotfix/') }}
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate prerelease usage
+        if: ${{ ( env.ALLOW_PRERELEASE == 'true' && inputs.is_prerelease == false ) || ( github.ref == 'refs/heads/main' && inputs.is_prerelease == true ) }}
+        run: |
+          echo "Prereleases should not be triggered on main; use develop or hotfix/*."
+          exit 1
+
+      - name: Checkout (full history required by NBGV)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # NBGV needs history to compute versions
+      # ref: dotnet/nbgv action docs call out deep clone as required
+      # (we're using the CLI here but the requirement is the same)
+
+      - name: Install nbgv (pinned)
+        run: |
+          dotnet tool update --global nbgv --version 3.8.38-alpha || \
+          dotnet tool install --global nbgv --version 3.8.38-alpha
+
+      - name: Compute version with nbgv
+        id: ver
+        run: |
+          nbgv get-version --format json > nbgv.json
+          echo "JSON:" && cat nbgv.json
+          SIMPLE=$(jq -r .SimpleVersion nbgv.json)
+          PRE=$(jq -r .PrereleaseVersion nbgv.json)   # includes leading hyphen or "null"
+          # Build a clean SemVer tag without +metadata
+          if [[ "${{ inputs.is_prerelease }}" == "true" ]]; then
+            if [[ "$PRE" == "null" || -z "$PRE" ]]; then
+              echo "Requested prerelease but NBGV computed no prerelease suffix."
+              exit 1
+            fi
+            TAG="v${SIMPLE}${PRE}"
+          else
+            TAG="v${SIMPLE}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Create git tag locally
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          if git rev-parse -q --verify "${{ steps.ver.outputs.tag }}" >/dev/null; then
+            echo "Tag already exists locally."
+          else
+            git tag -a "${{ steps.ver.outputs.tag }}" -m "Release ${{ steps.ver.outputs.tag }}"
+          fi
+          git push origin "${{ steps.ver.outputs.tag }}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          FLAGS=()
+          [[ "${{ inputs.is_draft }}" == "true"      ]] && FLAGS+=(--draft)
+          [[ "${{ inputs.is_prerelease }}" == "true" ]] && FLAGS+=(--prerelease)
+          # Mark "latest" only for stable releases from main
+          if [[ "${{ github.ref }}" == "refs/heads/main" && "${{ inputs.is_prerelease }}" != "true" ]]; then
+            FLAGS+=(--latest)
+          fi
+
+          echo "Creating release ${{ steps.ver.outputs.tag }}"
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            --title "${{ steps.ver.outputs.tag }}" \
+            --generate-notes \
+            "${FLAGS[@]}"
+
+What changed (and why)
+
+    Removed the “Commit and Push Version Change” step. NBGV’s computed version is not meant to overwrite version.json during release creation. Keep that file stable; use nbgv prepare-release when you want to bump baselines.
+    Matteo's Blog
+
+    Full history checkout (fetch-depth: 0). Required so NBGV can calculate version height/metadata correctly.
+    GitHub
+
+    Computed tag string from NBGV outputs (SimpleVersion + PrereleaseVersion), avoiding +build metadata in tags. If you prefer, you can simply run nbgv tag to tag the current commit with the computed version, then push the tag. NBGV explicitly supports tagging: “Tag a commit with its computed version.”
+    NuGet
+
+    Created the Release for that exact tag. This keeps your GH Releases aligned with the commit NBGV versioned.
+
+    Optional: you can swap the “Compute version” step to the official dotnet/nbgv GitHub Action and use its outputs like ${{ steps.nbgv.outputs.SimpleVersion }} / ${{ steps.nbgv.outputs.PrereleaseVersion }}. It installs the CLI and exposes rich outputs (SimpleVersion, SemVer2, NuGetPackageVersion, etc.), and its docs also call out the deep clone requirement.
+    GitHub
+
+If you want me to flip this to use nbgv tag directly (instead of building the tag string by hand), I can post that variant too.
+You said:
+yes, use nbgv tag
+ChatGPT said:
+
+Awesome—here’s your workflow rewritten to use nbgv tag (no writing back to version.json, just tag + release). It keeps your inputs/guards and pushes the exact tag that NBGV computes.
+
+name: Create Release
+
+on:
+  workflow_call:
+    inputs:
+      is_prerelease:
+        description: 'Create a prerelease'
+        type: boolean
+        required: true
+        default: false
+      is_draft:
+        description: 'Set as a draft'
+        type: boolean
+        required: true
+        default: false
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+env:
+  # allow prerelease only from develop or hotfix/*
+  ALLOW_PRERELEASE: ${{ startsWith(github.ref, 'refs/heads/develop') || startsWith(github.ref, 'refs/heads/hotfix/') }}
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate prerelease usage
+        if: ${{ ( env.ALLOW_PRERELEASE == 'true' && inputs.is_prerelease == false ) || ( github.ref == 'refs/heads/main' && inputs.is_prerelease == true ) }}
+        run: |
+          echo "Prereleases should not be triggered on main; use develop or hotfix/*."
+          exit 1
+
+      - name: Checkout (full history for NBGV)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install nbgv (pinned)
+        run: |
+          dotnet tool update --global nbgv --version 3.8.38-alpha || \
+          dotnet tool install --global nbgv --version 3.8.38-alpha
+
+      - name: Compute tag name from NBGV
+        id: ver
+        run: |
+          nbgv get-version --format json > nbgv.json
+          echo "Computed version:"
+          cat nbgv.json
+
+          SIMPLE=$(jq -r .SimpleVersion nbgv.json)
+          PRE=$(jq -r .PrereleaseVersion nbgv.json)     # e.g. "-alpha" or null
+          NUGET=$(jq -r .NuGetPackageVersion nbgv.json) # e.g. "1.2.3-alpha"
+
+          # We tag as v{NuGetPackageVersion} (no +metadata)
+          TAG="v${NUGET}"
+
+          # sanity checks vs caller intent
+          if [[ "${{ inputs.is_prerelease }}" == "true" && ( "$PRE" == "null" || -z "$PRE" ) ]]; then
+            echo "Requested prerelease but NBGV computed a stable version ($SIMPLE)."
+            exit 1
+          fi
+          if [[ "${{ inputs.is_prerelease }}" == "false" && "$PRE" != "null" && -n "$PRE" ]]; then
+            echo "Requested stable release but NBGV computed prerelease ($NUGET)."
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Create local git tag with NBGV
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+          # Let NBGV create the tag for the current commit
+          # (nbgv: "Tag a commit with its computed version")
+          nbgv tag || echo "Tag may already exist locally."
+
+      - name: Push tag
+        run: |
+          git push origin "${{ steps.ver.outputs.tag }}" || \
+          echo "Tag already exists on remote."
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          FLAGS=()
+          [[ "${{ inputs.is_draft }}" == "true"      ]] && FLAGS+=(--draft)
+          [[ "${{ inputs.is_prerelease }}" == "true" ]] && FLAGS+=(--prerelease)
+          # mark latest only for stable releases from main
+          if [[ "${{ github.ref }}" == "refs/heads/main" && "${{ inputs.is_prerelease }}" != "true" ]]; then
+            FLAGS+=(--latest)
+          fi
+
+          echo "Creating release ${{ steps.ver.outputs.tag }}"
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            --title "${{ steps.ver.outputs.tag }}" \
+            --generate-notes \
+            "${FLAGS[@]}"
+
+Why this is correct:
+
+    nbgv tag is the supported way to “tag a commit with its computed version.”
+    NuGet
+
+    We don’t edit version.json here; that file changes only via nbgv prepare-release/set-version or manual edits.
+    GitHub
+
+    Full history checkout ensures NBGV computes the version accurately. (Required by the official action/CLI.)
+    GitHub
+
+Want me to flip this to use the official dotnet/nbgv GitHub Action for the “Compute tag name” step instead of calling the CLI directly? It can expose NuGetPackageVersion/SemVer2 as outputs.
+GitHub
+You said:
+if you flip to use the dotnet/nbgv github action what will that effect?
+ChatGPT said:
+
+Short version: switching to the dotnet/nbgv action mainly changes how you install/use NBGV in CI. Functionally, nothing breaks—you still get the same versions and you can still run nbgv tag. The action:
+
+    Installs the CLI for you and exposes rich outputs like NuGetPackageVersion, SemVer2, SimpleVersion, etc., so you don’t have to jq a JSON yourself.
+    GitHub
+
+    Can export env vars (setAllVars, setCommonVars) if you prefer environment variables over step outputs.
+    GitHub
+
+    Still requires a deep clone (fetch-depth: 0) so version height computes correctly.
+    GitHub
+
+    Default tool version is latest stable unless you pin toolVersion: (you’re on 3.8.38-alpha, so pin it to keep behavior identical).
+    GitHub+1
+
+Below is your workflow flipped to the action and still using nbgv tag:
+
+name: Create Release
+
+on:
+  workflow_call:
+    inputs:
+      is_prerelease:
+        type: boolean
+        required: true
+        default: false
+      is_draft:
+        type: boolean
+        required: true
+        default: false
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+env:
+  ALLOW_PRERELEASE: ${{ startsWith(github.ref, 'refs/heads/develop') || startsWith(github.ref, 'refs/heads/hotfix/') }}
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate prerelease usage
+        if: ${{ ( env.ALLOW_PRERELEASE == 'true' && inputs.is_prerelease == false ) || ( github.ref == 'refs/heads/main' && inputs.is_prerelease == true ) }}
+        run: |
+          echo "Prereleases should not be triggered on main; use develop or hotfix/*."
+          exit 1
+
+      - name: Checkout (full history for NBGV)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # required by nbgv
+
+      - name: Nerdbank.GitVersioning (install + outputs)
+        id: nbgv
+        uses: dotnet/nbgv@v0.4.2
+        with:
+          toolVersion: 3.8.38-alpha   # pin to your current CLI
+          setAllVars: false           # optional: true to export NBGV_* env vars
+
+      - name: Sanity-check release type vs computed version
+        run: |
+          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          if [[ "${{ inputs.is_prerelease }}" == "true" && -z "$PRE" ]]; then
+            echo "Requested prerelease but NBGV computed a stable version."
+            exit 1
+          fi
+          if [[ "${{ inputs.is_prerelease }}" == "false" && -n "$PRE" ]]; then
+            echo "Requested stable release but NBGV computed a prerelease ($PRE)."
+            exit 1
+          fi
+
+      - name: Tag current commit with NBGV
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          nbgv tag || echo "Tag may already exist."
+          git push origin "v${{ steps.nbgv.outputs.NuGetPackageVersion }}" || echo "Tag exists on remote."
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          FLAGS=()
+          [[ "${{ inputs.is_draft }}" == "true"      ]] && FLAGS+=(--draft)
+          [[ "${{ inputs.is_prerelease }}" == "true" ]] && FLAGS+=(--prerelease)
+          if [[ "${{ github.ref }}" == "refs/heads/main" && "${{ inputs.is_prerelease }}" != "true" ]]; then
+            FLAGS+=(--latest)
+          fi
+          TAG="v${{ steps.nbgv.outputs.NuGetPackageVersion }}"
+          echo "Creating release ${TAG}"
+          gh release create "${TAG}" --title "${TAG}" --generate-notes "${FLAGS[@]}"
+
+TL;DR of the “effects”
+
+    Less custom scripting: you use action outputs instead of parsing JSON.
+    GitHub
+
+    Same tagging approach: nbgv tag still works because the action installs the CLI.
+    GitHub
+
+    Make sure to pin toolVersion: if you want the same alpha build you’ve been using; otherwise it’ll pick the latest stable by default.
+    GitHub
+
+If you want, I can also flip your Prepare Release workflow to the action so it exposes SimpleVersion/MajorMinorVersion for PR titles and branch names.
+You said:
+explain the steps, please
+ChatGPT said:
+
+Here’s what the Create Release (with dotnet/nbgv + nbgv tag) workflow does, step by step—what runs, why it runs, and what it changes.
+
+    Input & guardrails
+
+    The workflow is called by another workflow and takes two booleans: is_prerelease and is_draft.
+
+    An env rule (ALLOW_PRERELEASE) only permits prereleases from develop or hotfix/*. If you try a prerelease on main, it fails fast.
+
+    Checkout with full history
+
+    actions/checkout@v4 with fetch-depth: 0.
+
+    Required so NBGV can calculate version height and produce the correct SemVer.
+
+    Install & run the official dotnet/nbgv action
+
+    uses: dotnet/nbgv@… (pinned toolVersion: 3.8.38-alpha to match your setup).
+
+    This installs the CLI and exposes outputs like SimpleVersion, PrereleaseVersion, and NuGetPackageVersion.
+
+    It does not modify version.json.
+
+    Sanity check the intent vs computed version
+
+    If is_prerelease: true but NBGV says there’s no prerelease suffix, the job stops (and vice-versa).
+
+    This prevents accidental stable releases from prerelease branches or the reverse.
+
+    Tag the current commit using NBGV
+
+    Configure git user (actor).
+
+    Run nbgv tag to create an annotated tag v{NuGetPackageVersion} on HEAD.
+
+    Push the tag to origin. If it already exists, the step is non-fatal.
+
+    Create the GitHub Release for that tag
+
+    gh release create v{NuGetPackageVersion} with --generate-notes.
+
+    Adds --prerelease if you passed is_prerelease: true.
+
+    Marks --latest only for stable releases from main.
+
+    is_draft: true keeps it unpublished until you review.
+
+    What changes (and what doesn’t)
+
+    Changes: a git tag on the exact commit; a GitHub Release attached to that tag.
+
+    Doesn’t change: version.json. You only change that via nbgv prepare-release / nbgv set-version (or manual edits + commit).
+
+    When to run it
+
+    Stable release: run on main (or your stable vX.Y branch). NBGV computes a clean version → tag vX.Y.Z → Release marked latest.
+
+    Prerelease: run on develop or hotfix/*. NBGV computes vX.Y.Z-alpha… → prerelease Release.
+
+    Minimal caller example (from a repo using this as a reusable workflow)
+
+name: Cut Release
+on:
+  workflow_dispatch:
+    inputs:
+      prerelease: { type: boolean, default: false }
+      draft:      { type: boolean, default: false }
+
+jobs:
+  run:
+    uses: your-org/your-shared-repo/.github/workflows/create-release.yml@main
+    with:
+      is_prerelease: ${{ inputs.prerelease }}
+      is_draft: ${{ inputs.draft }}
+    secrets:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    Common gotchas
+
+    Missing full history → versions look wrong. Keep fetch-depth: 0.
+
+    GH_TOKEN must have contents: write.
+
+    First-ever tag in a repo sometimes needs to be pushed manually (permissions on org rules). After that, CI tagging is fine.
+
+That’s it—clean, reproducible releases aligned to the version NBGV computes, with no accidental edits to your version.json.
+You said:
+Adding in input target_branch which will be the branch the action needs to run against.
+ChatGPT said:
+
+Nice add. Here’s the updated reusable workflow with a target_branch input. It checks the branch exists, checks out that branch, runs dotnet/nbgv, tags that branch’s HEAD with nbgv tag, pushes the tag, and creates the GitHub Release.
+
+name: Create Release
+
+on:
+  workflow_call:
+    inputs:
+      target_branch:
+        description: 'Branch to release from (e.g., main, develop, hotfix/xyz)'
+        type: string
+        required: true
+        default: main
+      is_prerelease:
+        description: 'Create a prerelease'
+        type: boolean
+        required: true
+        default: false
+      is_draft:
+        description: 'Set as a draft'
+        type: boolean
+        required: true
+        default: false
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate prerelease not on main
+        if: ${{ inputs.is_prerelease && inputs.target_branch == 'main' }}
+        run: |
+          echo "❌ Prereleases must not be cut from main. Use develop or hotfix/*."
+          exit 1
+
+      - name: Validate stable not on develop/hotfix
+        if: ${{ !inputs.is_prerelease && (startsWith(inputs.target_branch, 'develop') || startsWith(inputs.target_branch, 'hotfix/')) }}
+        run: |
+          echo "❌ Stable releases should come from main (or your vX.Y branch), not develop/hotfix/*."
+          exit 1
+
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.target_branch }}
+
+      - name: Verify target branch exists on remote
+        run: |
+          if ! git ls-remote --exit-code --heads origin "${{ inputs.target_branch }}" >/dev/null; then
+            echo "❌ Branch not found on origin: ${{ inputs.target_branch }}"
+            exit 1
+          fi
+
+      - name: Nerdbank.GitVersioning (install + outputs)
+        id: nbgv
+        uses: dotnet/nbgv@v0.4.2
+        with:
+          toolVersion: 3.8.38-alpha   # pin to your current CLI
+
+      - name: Sanity-check desired release type vs computed version
+        run: |
+          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          if [[ "${{ inputs.is_prerelease }}" == "true" && -z "$PRE" ]]; then
+            echo "❌ Requested prerelease but NBGV computed a STABLE version."
+            exit 1
+          fi
+          if [[ "${{ inputs.is_prerelease }}" == "false" && -n "$PRE" ]]; then
+            echo "❌ Requested STABLE release but NBGV computed a PRERELEASE ($PRE)."
+            exit 1
+          fi
+
+      - name: Tag current commit with NBGV
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          # Create annotated tag at HEAD of target_branch
+          nbgv tag || echo "Tag may already exist locally."
+          # Default tag name is v{NuGetPackageVersion}
+          git push origin "v${{ steps.nbgv.outputs.NuGetPackageVersion }}" || echo "Tag already exists on remote."
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          FLAGS=()
+          [[ "${{ inputs.is_draft }}" == "true"      ]] && FLAGS+=(--draft)
+          [[ "${{ inputs.is_prerelease }}" == "true" ]] && FLAGS+=(--prerelease)
+          # Mark latest only for stable releases from MAIN
+          if [[ "${{ inputs.target_branch }}" == "main" && "${{ inputs.is_prerelease }}" != "true" ]]; then
+            FLAGS+=(--latest)
+          fi
+
+          TAG="v${{ steps.nbgv.outputs.NuGetPackageVersion }}"
+          echo "Creating release ${TAG} from branch '${{ inputs.target_branch }}'"
+          gh release create "${TAG}" --title "${TAG}" --generate-notes "${FLAGS[@]}"
+
+Quick notes:
+
+    Branch targeting: We explicitly checkout inputs.target_branch, so nbgv tag applies to that branch’s HEAD.
+
+    Guards: Blocks prerelease from main, and blocks stable from develop/hotfix/*. Tweak if you want looser rules.
+
+    Tag name: We push v${{ steps.nbgv.outputs.NuGetPackageVersion }} which matches what nbgv tag creates by default.
+
+    Latest flag: Only set for stable releases from main.
+
+If you also cut servicing from vX.Y branches, add another rule to allow stable from ^v\d+\.\d+$. Want me to wire that matcher in too?
+You said:
+how to I get the value selected in github action "Use Workflow form"
+ChatGPT said:
+
+Totally—there are two kinds of values you can grab from the “Run workflow” form:
+
+    Your custom inputs (the fields you define under workflow_dispatch.inputs)
+
+    The branch you picked in the “Use workflow from” dropdown
+
+Here’s how to read both.
+1) Get your custom inputs
+
+Define them:
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: "Branch to release from"
+        type: choice
+        options: [main, develop, hotfix/foo]
+        default: main
+      is_prerelease:
+        description: "Create a prerelease?"
+        type: boolean
+        default: false
+
+Use them (same workflow):
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show values
+        run: |
+          echo "target_branch = ${{ inputs.target_branch }}"
+          echo "is_prerelease = ${{ inputs.is_prerelease }}"
+
+      - name: Checkout the chosen branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.target_branch }}
+
+      - name: Only run if prerelease
+        if: ${{ inputs.is_prerelease }}
+        run: echo "Doing prerelease things…"
+
+Notes:
+
+    Prefer the inputs.* context. It preserves booleans as real booleans; github.event.inputs.* also works but treats everything as strings.
+    The GitHub Blog
+    GitHub Docs
+
+2) Get the branch chosen in the “Use workflow from” dropdown
+
+These come from the github context:
+
+- name: Which branch did the user pick in the dropdown?
+  run: |
+    echo "ref      = ${{ github.ref }}"      # e.g. refs/heads/develop
+    echo "ref_name = ${{ github.ref_name }}" # e.g. develop
+
+    Use github.ref_name when you need just develop/main; github.ref is the full ref.
+    GitHub Docs+1
+
+3) Reusable workflow case (workflow_call)
+
+Caller passes the UI inputs through:
+
+# caller.yml
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch: { type: string, default: main }
+      is_prerelease: { type: boolean, default: false }
+
+jobs:
+  call:
+    uses: your-org/your-repo/.github/workflows/reusable.yml@main
+    with:
+      target_branch: ${{ inputs.target_branch }}
+      is_prerelease: ${{ inputs.is_prerelease }}
+
+Called workflow reads them the same way:
+
+# reusable.yml
+on:
+  workflow_call:
+    inputs:
+      target_branch: { type: string, required: true }
+      is_prerelease: { type: boolean, required: true }
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ inputs.target_branch }} / prerelease=${{ inputs.is_prerelease }}"
+
+(Reusable workflows use the inputs.* context too.)
+GitHub Docs+1
+4) Handy extras
+
+    Put the chosen values in the run’s title:
+
+run-name: "Release from ${{ inputs.target_branch }} • prerelease=${{ inputs.is_prerelease }} by @${{ github.actor }}"
+
+This is a nice way to see selections at a glance in the Actions list.
+Stack Overflow
+
+If you want, paste your current YAML and I’ll wire target_branch + guards exactly where you need them.
+You said:
+name: Create Release
+
+on:
+  workflow_call:
+    inputs:
+      target_branch: 
+        type: string
+        required: true
+      is_prerelease:
+        type: boolean
+        required: true
+        default: false
+      is_draft:
+        type: boolean
+        required: true
+        default: false
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+env:
+  ALLOW_PRERELEASE: ${{ startsWith(.ref, 'refs/heads/develop') || startsWith(github.ref, 'refs/heads/hotfix/') }}
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate prerelease usage
+        if: ${{ ( env.ALLOW_PRERELEASE == 'true' && inputs.is_prerelease == false ) || ( github.ref == 'refs/heads/main' && inputs.is_prerelease == true ) }}
+        run: |
+          echo "Prereleases should not be triggered on main; use develop or hotfix/*."
+          exit 1
+
+      - name: Checkout (full history for NBGV)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # required by nbgv
+
+      - name: Nerdbank.GitVersioning (install + outputs)
+        id: nbgv
+        uses: dotnet/nbgv@v0.4.2
+        with:
+          toolVersion: 3.8.38-alpha   # pin to your current CLI
+          setAllVars: false           # optional: true to export NBGV_* env vars
+
+      - name: Sanity-check release type vs computed version
+        run: |
+          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          if [[ "${{ inputs.is_prerelease }}" == "true" && -z "$PRE" ]]; then
+            echo "Requested prerelease but NBGV computed a stable version."
+            exit 1
+          fi
+          if [[ "${{ inputs.is_prerelease }}" == "false" && -n "$PRE" ]]; then
+            echo "Requested stable release but NBGV computed a prerelease ($PRE)."
+            exit 1
+          fi
+
+      - name: Tag current commit with NBGV
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          nbgv tag || echo "Tag may already exist."
+          git push origin "v${{ steps.nbgv.outputs.NuGetPackageVersion }}" || echo "Tag exists on remote."
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          FLAGS=()
+          [[ "${{ inputs.is_draft }}" == "true"      ]] && FLAGS+=(--draft)
+          [[ "${{ inputs.is_prerelease }}" == "true" ]] && FLAGS+=(--prerelease)
+          if [[ "${{ github.ref }}" == "refs/heads/main" && "${{ inputs.is_prerelease }}" != "true" ]]; then
+            FLAGS+=(--latest)
+          fi
+          TAG="v${{ steps.nbgv.outputs.NuGetPackageVersion }}"
+          echo "Creating release ${TAG}"
+          gh release create "${TAG}" --title "${TAG}" --generate-notes "${FLAGS[@]}"
+ChatGPT said:
+
+Good catch—there are a few issues to fix:
+
+    You defined target_branch but never used it (checkout/tagging run on the default ref).
+
+    env.ALLOW_PRERELEASE uses .ref (typo) and should key off inputs.target_branch, not the triggering ref.
+
+    Guards should be explicit (block prerelease on main; block stable on develop/hotfix/*).
+
+    Checkout must target the selected branch.
+
+    Mark “latest” for stable releases from main or servicing branches like vX.Y.
+
+Here’s a cleaned-up version you can drop in:
+
+name: Create Release
+
+on:
+  workflow_call:
+    inputs:
+      target_branch:
+        description: 'Branch to release from (e.g., main, develop, hotfix/xyz, v1.2)'
+        type: string
+        required: true
+      is_prerelease:
+        type: boolean
+        required: true
+        default: false
+      is_draft:
+        type: boolean
+        required: true
+        default: false
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      # Fail if trying to cut a prerelease from main
+      - name: Guard: no prerelease from main
+        if: ${{ inputs.is_prerelease && inputs.target_branch == 'main' }}
+        run: |
+          echo "❌ Prereleases must not be cut from main. Use develop or hotfix/*."
+          exit 1
+
+      # Fail if trying to cut a stable from develop or hotfix/*
+      - name: Guard: stable not from develop/hotfix
+        if: ${{ !inputs.is_prerelease && (startsWith(inputs.target_branch, 'develop') || startsWith(inputs.target_branch, 'hotfix/')) }}
+        run: |
+          echo "❌ Stable releases should come from main or vX.Y servicing branches, not develop/hotfix/*."
+          exit 1
+
+      - name: Verify target branch exists on origin
+        run: |
+          if ! git ls-remote --exit-code --heads origin "${{ inputs.target_branch }}" >/dev/null; then
+            echo "❌ Branch not found on origin: ${{ inputs.target_branch }}"
+            exit 1
+          fi
+
+      - name: Checkout target branch (full history for NBGV)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.target_branch }}
+
+      - name: Nerdbank.GitVersioning (install + outputs)
+        id: nbgv
+        uses: dotnet/nbgv@v0.4.2
+        with:
+          toolVersion: 3.8.38-alpha   # keep behavior pinned
+          setAllVars: false
+
+      - name: Sanity-check: requested prerelease vs computed version
+        run: |
+          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          if [[ "${{ inputs.is_prerelease }}" == "true" && -z "$PRE" ]]; then
+            echo "❌ Requested prerelease, but NBGV computed a STABLE version."
+            exit 1
+          fi
+          if [[ "${{ inputs.is_prerelease }}" == "false" && -n "$PRE" ]]; then
+            echo "❌ Requested STABLE, but NBGV computed a PRERELEASE ($PRE)."
+            exit 1
+          fi
+
+      - name: Tag current commit with NBGV
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          # Creates annotated tag v{NuGetPackageVersion} at HEAD
+          nbgv tag || echo "Tag may already exist locally."
+          git push origin "v${{ steps.nbgv.outputs.NuGetPackageVersion }}" || echo "Tag already exists on remote."
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          FLAGS=()
+          [[ "${{ inputs.is_draft }}" == "true"      ]] && FLAGS+=(--draft)
+          [[ "${{ inputs.is_prerelease }}" == "true" ]] && FLAGS+=(--prerelease)
+
+          # Mark latest for stable releases from main or servicing branches vX.Y
+          if [[ "${{ inputs.target_branch }}" == "main" || "${{ inputs.target_branch }}" =~ ^v[0-9]+\.[0-9]+$ ]]; then
+            if [[ "${{ inputs.is_prerelease }}" != "true" ]]; then
+              FLAGS+=(--latest)
+            fi
+          fi
+
+          TAG="v${{ steps.nbgv.outputs.NuGetPackageVersion }}"
+          echo "Creating release ${TAG} from '${{ inputs.target_branch }}'"
+          gh release create "${TAG}" --title "${TAG}" --generate-notes "${FLAGS[@]}"
+
+If you also want to allow stable releases from release/vX.Y (different naming), tweak the regex in that “latest” block accordingly. Want me to add that too?
+You said:
+let's leave out the inputs is_prerelease and is_draft
+ChatGPT said:
+
+Got it—here’s a lean, auto-driven version that only takes target_branch.
+It infers prerelease vs. stable from NBGV, tags with nbgv tag, and creates the Release.
+
+name: Create Release
+
+on:
+  workflow_call:
+    inputs:
+      target_branch:
+        description: 'Branch to release from (e.g., main, develop, hotfix/xyz, v1.2)'
+        type: string
+        required: true
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify target branch exists on origin
+        run: |
+          set -e
+          REPO_URL="https://github.com/${{ github.repository }}.git"
+          BR="${{ inputs.target_branch }}"
+          if ! git ls-remote --exit-code --heads "$REPO_URL" "$BR" >/dev/null; then
+            echo "❌ Branch not found on origin: $BR"
+            exit 1
+          fi
+
+      - name: Checkout target branch (full history for NBGV)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.target_branch }}
+
+      - name: Nerdbank.GitVersioning (install + outputs)
+        id: nbgv
+        uses: dotnet/nbgv@v0.4.2
+        with:
+          toolVersion: 3.8.38-alpha
+
+      # Optional guardrails (keep or remove to suit your policy)
+      - name: Guard: block prerelease from main; block stable from develop/hotfix/*
+        run: |
+          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          BR="${{ inputs.target_branch }}"
+
+          # prerelease if PRE is non-empty
+          if [[ -n "$PRE" && "$BR" == "main" ]]; then
+            echo "❌ Computed PRERELEASE on 'main'. Cut prereleases from develop or hotfix/*."
+            exit 1
+          fi
+          if [[ -z "$PRE" && ( "$BR" == develop || "$BR" =~ ^hotfix/ ) ]]; then
+            echo "❌ Computed STABLE on '$BR'. Stable releases should come from main or vX.Y."
+            exit 1
+          fi
+
+      - name: Tag current commit with NBGV
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          # Creates annotated tag v{NuGetPackageVersion} at HEAD
+          nbgv tag || echo "Tag may already exist locally."
+          git push origin "v${{ steps.nbgv.outputs.NuGetPackageVersion }}" || echo "Tag already exists on remote."
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          TAG="v${{ steps.nbgv.outputs.NuGetPackageVersion }}"
+          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          BR="${{ inputs.target_branch }}"
+
+          FLAGS=()
+          # Auto-flag prerelease if NBGV computed one
+          [[ -n "$PRE" ]] && FLAGS+=(--prerelease)
+
+          # Mark latest only for stable releases from main or servicing branches vX.Y
+          if [[ -z "$PRE" && ( "$BR" == "main" || "$BR" =~ ^v[0-9]+\.[0-9]+$ ) ]]; then
+            FLAGS+=(--latest)
+          fi
+
+          echo "Creating release ${TAG} from '${BR}'"
+          gh release create "${TAG}" --title "${TAG}" --generate-notes "${FLAGS[@]}"
+
+Quick notes:
+
+    Only input is target_branch.
+
+    Prerelease detection is automatic via steps.nbgv.outputs.PrereleaseVersion.
+
+    Latest is set for stable releases from main or servicing branches like v1.2.
+
+    The guard step is optional—keep it if you want policy enforcement (no prerelease from main, no stable from develop/hotfix/*).
+
+You said:
+Do we need the guard rails?
+ChatGPT said:
+
+Short answer: No, you don’t need the guard rails for correctness—the workflow will work fine without them because:
+
+    NBGV decides whether the computed version is stable vs. prerelease.
+
+    Your release step already auto-flags --prerelease when NBGV returns a prerelease suffix.
+
+    You only mark --latest for stable releases from main or vX.Y, which protects the “latest” badge.
+
+Why you might want them anyway
+
+They’re just policy checks to prevent human oopsies:
+
+    Accidental prerelease from main (if main is on 1.2.0-alpha after prepare-release).
+
+    Accidental stable from develop/hotfix/* (unlikely with your config, but possible if someone edited version.json oddly).
+
+If you’re comfortable with those risks (and you trust the inferred type from NBGV), drop them.
+Option A — No guard rails (lean)
+
+Delete the entire “Guard: block prerelease…” step. Nothing else needs to change.
+
+# (keep everything else the same)
+
+# REMOVE this step completely:
+# - name: Guard: block prerelease from main; block stable from develop/hotfix/*
+#   run: |
+#     PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+#     BR="${{ inputs.target_branch }}"
+#     if [[ -n "$PRE" && "$BR" == "main" ]]; then
+#       echo "❌ Computed PRERELEASE on 'main'..."
+#       exit 1
+#     fi
+#     if [[ -z "$PRE" && ( "$BR" == develop || "$BR" =~ ^hotfix/ ) ]]; then
+#       echo "❌ Computed STABLE on '$BR'..."
+#       exit 1
+#     fi
+
+Option B — Soft guard (warn, don’t fail)
+
+If you still want visibility without blocking:
+
+- name: Policy warning (non-blocking)
+  run: |
+    PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+    BR="${{ inputs.target_branch }}"
+    if [[ -n "$PRE" && "$BR" == "main" ]]; then
+      echo "⚠️  Warning: prerelease from 'main'."
+    fi
+    if [[ -z "$PRE" && ( "$BR" == "develop" || "$BR" =~ ^hotfix/ ) ]]; then
+      echo "⚠️  Warning: stable release from '$BR'."
+    fi
+
+My recommendation
+
+    For a small team: Option A (no guards)—fewer moving parts; NBGV + your --latest rule already keeps you safe enough.
+
+    For a larger team or shared repo: Option B (soft guard)—cheap visibility without failed runs.
+
+Want me to paste your full YAML with the guards removed (or softened)?
+You said:
+I'll keep them
+ChatGPT said:
+
+Perfect—here’s the final reusable workflow with guard rails kept, only target_branch input, dotnet/nbgv for version outputs, nbgv tag for tagging, and auto–prerelease/latest logic:
+
+name: Create Release
+
+on:
+  workflow_call:
+    inputs:
+      target_branch:
+        description: 'Branch to release from (e.g., main, develop, hotfix/xyz, v1.2)'
+        type: string
+        required: true
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify target branch exists on origin
+        run: |
+          set -e
+          REPO_URL="https://github.com/${{ github.repository }}.git"
+          BR="${{ inputs.target_branch }}"
+          if ! git ls-remote --exit-code --heads "$REPO_URL" "$BR" >/dev/null; then
+            echo "❌ Branch not found on origin: $BR"
+            exit 1
+          fi
+
+      - name: Checkout target branch (full history for NBGV)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.target_branch }}
+
+      - name: Nerdbank.GitVersioning (install + outputs)
+        id: nbgv
+        uses: dotnet/nbgv@v0.4.2
+        with:
+          toolVersion: 3.8.38-alpha
+
+      # Guard rails: prevent common mistakes
+      - name: Guard: block prerelease from main; block stable from develop/hotfix/*
+        run: |
+          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          BR="${{ inputs.target_branch }}"
+          if [[ -n "$PRE" && "$BR" == "main" ]]; then
+            echo "❌ Computed PRERELEASE on 'main'. Cut prereleases from develop or hotfix/*."
+            exit 1
+          fi
+          if [[ -z "$PRE" && ( "$BR" == "develop" || "$BR" =~ ^hotfix/ ) ]]; then
+            echo "❌ Computed STABLE on '$BR'. Stable releases should come from main or vX.Y."
+            exit 1
+          fi
+
+      - name: Tag current commit with NBGV
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          nbgv tag || echo "Tag may already exist locally."
+          git push origin "v${{ steps.nbgv.outputs.NuGetPackageVersion }}" || echo "Tag already exists on remote."
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          TAG="v${{ steps.nbgv.outputs.NuGetPackageVersion }}"
+          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          BR="${{ inputs.target_branch }}"
+          FLAGS=()
+          [[ -n "$PRE" ]] || FLAGS+=(--latest)  # latest only for stable
+          # Only mark latest for stable from main or servicing branches vX.Y
+          if [[ -n "$PRE" || ( "$BR" != "main" && ! "$BR" =~ ^v[0-9]+\.[0-9]+$ ) ]]; then
+            FLAGS=("${FLAGS[@]/--latest}")  # strip latest if conditions not met
+          fi
+          echo "Creating release ${TAG} from '${BR}'"
+          gh release create "${TAG}" --title "${TAG}" --generate-notes "${FLAGS[@]}"
+
+Notes:
+
+    Prerelease vs stable is inferred from NBGV’s PrereleaseVersion.
+
+    Latest badge is applied only for stable releases from main or servicing branches like v1.2.
+
+    If your servicing branches use a different naming pattern (e.g., release/v1.2), change the regex ^v[0-9]+\.[0-9]+$ accordingly.
+
+You said:
+Branch exists but getting this error:
+Run set -e
+fatal: could not read Username for 'https://github.com': No such device or address
+❌ Branch not found on origin: develop
+Error: Process completed with exit code 1.
+ChatGPT said:
+
+That error happens because the branch check runs before actions/checkout and uses unauthenticated git ls-remote over HTTPS. For private repos (or some org settings), Git needs credentials → it prompts → CI can’t answer → boom.
+
+You’ve got three clean fixes. Pick one:
+Option A — Simplest: let checkout be the check
+
+Just remove the manual “verify branch” step and have checkout target the branch. If it doesn’t exist, checkout fails with a clear error.
+
+- name: Checkout target branch (full history for NBGV)
+  uses: actions/checkout@v4
+  with:
+    fetch-depth: 0
+    ref: ${{ inputs.target_branch }}
+    token: ${{ secrets.GH_TOKEN }}   # ensures auth on private repos
+
+Option B — Keep the check, but authenticate (GitHub API)
+
+Use the API with your token—no secrets in the URL, no prompts.
+
+- name: Verify target branch exists on origin (API)
+  env:
+    GH_TOKEN: ${{ secrets.GH_TOKEN }}
+  run: |
+    set -euo pipefail
+    BR="${{ inputs.target_branch }}"
+    URL="https://api.github.com/repos/${{ github.repository }}/branches/${BR}"
+    HTTP=$(curl -sS -o /dev/null -w "%{http_code}" \
+      -H "Authorization: Bearer ${GH_TOKEN}" \
+      -H "Accept: application/vnd.github+json" \
+      "$URL")
+    if [[ "$HTTP" != "200" ]]; then
+      echo "❌ Branch not found on origin: $BR"
+      exit 1
+    fi
+
+Then do the checkout (still pass the token):
+
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0
+    ref: ${{ inputs.target_branch }}
+    token: ${{ secrets.GH_TOKEN }}
+
+Option C — Keep the check, but authenticate git ls-remote
+
+If you really want git ls-remote, inject the token into the URL:
+
+- name: Verify target branch exists on origin (git)
+  env:
+    GH_TOKEN: ${{ secrets.GH_TOKEN }}
+  run: |
+    set -euo pipefail
+    BR="${{ inputs.target_branch }}"
+    URL="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+    if ! git ls-remote --exit-code --heads "$URL" "$BR" >/dev/null; then
+      echo "❌ Branch not found on origin: $BR"
+      exit 1
+    fi
+
+Extra safety
+
+Also pass a token to actions/checkout so your later git push origin "v..." reuses creds reliably:
+
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0
+    ref: ${{ inputs.target_branch }}
+    token: ${{ secrets.GH_TOKEN }}
+
+And make sure GH_TOKEN (or the default GITHUB_TOKEN) has contents: write (you already set that in permissions).
+
+If you want, paste your current YAML and tell me which option you prefer—I’ll drop in the exact lines.
+You said:
+here is the calling github action:
+﻿name: Create Release
+
+on:
+  workflow_dispatch:
+
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  prepare-release:
+    uses: Stillpoint-Software/shared-workflows/.github/workflows/create_new_release.yml@main
+    with:
+      target_branch: "${{ github.ref_name }}"
+    secrets: 
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+ChatGPT said:
+
+Nice—your caller looks good, and target_branch: "${{ github.ref_name }}" will indeed pass the branch the user picked in the “Use workflow from” dropdown.
+
+Given the earlier auth error, make these tweaks in the called workflow (create_new_release.yml) so it works reliably with private repos:
+
+    Drop the unauthenticated branch check (or switch it to API). Easiest is to remove it and let checkout be the source of truth.
+
+    Pass a token to checkout so later git push (for the tag) reuses the creds.
+
+Here are the only lines you need to change in the called workflow:
+
+# REMOVE this block (it causes the auth error):
+# - name: Verify target branch exists on origin
+#   run: |
+#     if ! git ls-remote --exit-code --heads origin "${{ inputs.target_branch }}" >/dev/null; then
+#       echo "❌ Branch not found on origin: ${{ inputs.target_branch }}"
+#       exit 1
+#     fi
+
+# UPDATE checkout to include the token and the ref:
+- name: Checkout target branch (full history for NBGV)
+  uses: actions/checkout@v4
+  with:
+    fetch-depth: 0
+    ref: ${{ inputs.target_branch }}
+    token: ${{ secrets.GH_TOKEN }}     # <- use the token passed from the caller
+
+Everything else (nbgv action, guards, nbgv tag, gh release create) can stay as-is.
+
+If you’d rather keep a branch existence check, swap it to use the GitHub API (authenticated) before checkout:
+
+- name: Verify target branch via API
+  env:
+    GH_TOKEN: ${{ secrets.GH_TOKEN }}
+  run: |
+    set -euo pipefail
+    BR="${{ inputs.target_branch }}"
+    URL="https://api.github.com/repos/${{ github.repository }}/branches/${BR}"
+    code=$(curl -sS -o /dev/null -w "%{http_code}" \
+      -H "Authorization: Bearer ${GH_TOKEN}" \
+      -H "Accept: application/vnd.github+json" "$URL")
+    [[ "$code" == "200" ]] || { echo "❌ Branch not found on origin: $BR"; exit 1; }
+
+Quick sanity checklist:
+
+    Caller passes GH_TOKEN (you’ve done that ✅).
+
+    Caller sets permissions: contents: write (done ✅).
+
+    Called workflow uses that token for checkout and later push tag (after the edit above ✅).
+
+Try that and you should be clear of the could not read Username error. Want me to paste your full called workflow with those edits applied?
+You said:
+here is the log error:
+2025-08-11T13:30:22.1726823Z [command]/usr/bin/dotnet tool update -g nbgv --version 3.8.38-alpha
+2025-08-11T13:30:27.2157188Z Skipping NuGet package signature verification.
+2025-08-11T13:30:27.8048543Z Tool 'nbgv' was successfully updated from version '3.7.115' to version '3.8.38-alpha'.
+2025-08-11T13:30:27.8850359Z [command]/home/runner/.dotnet/tools/nbgv get-version -f json -p .
+2025-08-11T13:30:28.6620039Z Unhandled exception: System.InvalidOperationException: Unable to get version from commit: 625341b41ec5a65dc4d7ec78e91770573952fc61
+2025-08-11T13:30:28.6646683Z  ---> System.ArgumentException: 'semanticVersion' cannot be an empty string ("") or start with the null character. (Parameter 'semanticVersion')
+2025-08-11T13:30:28.6649901Z    at Validation.Requires.NotNullOrEmpty(String value, String parameterName)
+2025-08-11T13:30:28.6651181Z    at Nerdbank.GitVersioning.SemanticVersion.TryParse(String semanticVersion, SemanticVersion& version)
+2025-08-11T13:30:28.6652957Z    at Nerdbank.GitVersioning.SemanticVersionJsonConverter.ReadJson(JsonReader reader, Type objectType, Object existingValue, JsonSerializer serializer)
+2025-08-11T13:30:28.6656711Z    at Newtonsoft.Json.Serialization.JsonSerializerInternalReader.DeserializeConvertable(JsonConverter converter, JsonReader reader, Type objectType, Object existingValue)
+2025-08-11T13:30:28.6660476Z    at Newtonsoft.Json.Serialization.JsonSerializerInternalReader.SetPropertyValue(JsonProperty property, JsonConverter propertyConverter, JsonContainerContract containerContract, JsonProperty containerProperty, JsonReader reader, Object target)
+2025-08-11T13:30:28.6663268Z    at Newtonsoft.Json.Serialization.JsonSerializerInternalReader.PopulateObject(Object newObject, JsonReader reader, JsonObjectContract contract, JsonProperty member, String id)
+2025-08-11T13:30:28.6666959Z    at Newtonsoft.Json.Serialization.JsonSerializerInternalReader.CreateObject(JsonReader reader, Type objectType, JsonContract contract, JsonProperty member, JsonContainerContract containerContract, JsonProperty containerMember, Object existingValue)
+2025-08-11T13:30:28.6690591Z    at Newtonsoft.Json.Serialization.JsonSerializerInternalReader.CreateValueInternal(JsonReader reader, Type objectType, JsonContract contract, JsonProperty member, JsonContainerContract containerContract, JsonProperty containerMember, Object existingValue)
+2025-08-11T13:30:28.6694216Z    at Newtonsoft.Json.Serialization.JsonSerializerInternalReader.Deserialize(JsonReader reader, Type objectType, Boolean checkAdditionalContent)
+2025-08-11T13:30:28.6696270Z    at Newtonsoft.Json.JsonSerializer.DeserializeInternal(JsonReader reader, Type objectType)
+2025-08-11T13:30:28.6701422Z    at Newtonsoft.Json.JsonSerializer.Deserialize(JsonReader reader, Type objectType)
+2025-08-11T13:30:28.6704205Z    at Newtonsoft.Json.JsonConvert.DeserializeObject(String value, Type type, JsonSerializerSettings settings)
+2025-08-11T13:30:28.6705507Z    at Newtonsoft.Json.JsonConvert.DeserializeObject[T](String value, JsonSerializerSettings settings)
+2025-08-11T13:30:28.6707062Z    at Nerdbank.GitVersioning.VersionFile.TryReadVersionJsonContent(String jsonContent, String repoRelativeBaseDirectory)
+2025-08-11T13:30:28.6708824Z    at Nerdbank.GitVersioning.Managed.ManagedVersionFile.GetVersion(GitCommit commit, String repoRelativeProjectDirectory, Dictionary2 blobVersionCache, String& actualDirectory)
+2025-08-11T13:30:28.6710418Z    at Nerdbank.GitVersioning.Managed.GitExtensions.GitWalkTracker.GetVersion(GitCommit commit)
+2025-08-11T13:30:28.6711212Z    --- End of inner exception stack trace ---
+2025-08-11T13:30:28.6711976Z    at Nerdbank.GitVersioning.Managed.GitExtensions.GitWalkTracker.GetVersion(GitCommit commit)
+2025-08-11T13:30:28.6713857Z    at Nerdbank.GitVersioning.Managed.GitExtensions.CommitMatchesVersion(GitCommit commit, SemanticVersion expectedVersion, Position comparisonPrecision, GitWalkTracker tracker)
+2025-08-11T13:30:28.6829941Z    at Nerdbank.GitVersioning.Managed.GitExtensions.<>c__DisplayClass3_0.<GetVersionHeight>b__0(GitCommit c)
+2025-08-11T13:30:28.6831544Z    at Nerdbank.GitVersioning.Managed.GitExtensions.<GetCommitHeight>g__TryCalculateHeight|4_0(GitCommit commit, <>c__DisplayClass4_0&)
+2025-08-11T13:30:28.6833313Z    at Nerdbank.GitVersioning.Managed.GitExtensions.GetCommitHeight(GitRepository repository, GitCommit startingCommit, GitWalkTracker tracker, Func2 continueStepping)
+2025-08-11T13:30:28.6834941Z    at Nerdbank.GitVersioning.Managed.GitExtensions.GetHeight(ManagedGitContext context, Func2 continueStepping)
+2025-08-11T13:30:28.6836803Z    at Nerdbank.GitVersioning.Managed.GitExtensions.GetVersionHeight(ManagedGitContext context, Version baseVersion)
+2025-08-11T13:30:28.6838482Z    at Nerdbank.GitVersioning.Managed.ManagedGitContext.CalculateVersionHeight(VersionOptions committedVersion, VersionOptions workingVersion)
+2025-08-11T13:30:28.6840130Z    at Nerdbank.GitVersioning.VersionOracle..ctor(GitContext context, ICloudBuild cloudBuild, Nullable1 overrideVersionHeightOffset)
+2025-08-11T13:30:28.6842057Z    at Nerdbank.GitVersioning.Tool.Program.OnGetVersionCommand(String project, String[] metadata, String format, String variable, String commitish) in D:\a\Nerdbank.GitVersioning\Nerdbank.GitVersioning\src\nbgv\Program.cs:line 437
+2025-08-11T13:30:28.6843752Z    at System.CommandLine.Handler.<>c__DisplayClass17_05.<SetHandler>b__0(InvocationContext context)
+2025-08-11T13:30:28.6844784Z    at System.CommandLine.Invocation.AnonymousCommandHandler.InvokeAsync(InvocationContext context)
+2025-08-11T13:30:28.6846224Z    at System.CommandLine.Invocation.AnonymousCommandHandler.SyncUsingAsync(InvocationContext context)
+2025-08-11T13:30:28.6847377Z    at System.CommandLine.Invocation.AnonymousCommandHandler.Invoke(InvocationContext context)
+2025-08-11T13:30:28.6848581Z    at System.CommandLine.Invocation.InvocationPipeline.<>c__DisplayClass4_0.<<BuildInvocationChain>b__0>d.MoveNext()
+2025-08-11T13:30:28.6849501Z --- End of stack trace from previous location ---
+2025-08-11T13:30:28.6850507Z    at System.CommandLine.Builder.CommandLineBuilderExtensions.<>c__DisplayClass17_0.<<UseParseErrorReporting>b__0>d.MoveNext()
+2025-08-11T13:30:28.6851508Z --- End of stack trace from previous location ---
+2025-08-11T13:30:28.6852410Z    at System.CommandLine.Builder.CommandLineBuilderExtensions.<>c__DisplayClass12_0.<<UseHelp>b__0>d.MoveNext()
+2025-08-11T13:30:28.6853315Z --- End of stack trace from previous location ---
+2025-08-11T13:30:28.6854245Z    at System.CommandLine.Builder.CommandLineBuilderExtensions.<>c__DisplayClass22_0.<<UseVersionOption>b__0>d.MoveNext()
+2025-08-11T13:30:28.6855189Z --- End of stack trace from previous location ---
+2025-08-11T13:30:28.6921776Z    at System.CommandLine.Builder.CommandLineBuilderExtensions.<>c__DisplayClass19_0.<<UseTypoCorrections>b__0>d.MoveNext()
+2025-08-11T13:30:28.6922777Z --- End of stack trace from previous location ---
+2025-08-11T13:30:28.6923674Z    at System.CommandLine.Builder.CommandLineBuilderExtensions.<>c.<<UseSuggestDirective>b__18_0>d.MoveNext()
+2025-08-11T13:30:28.6924960Z --- End of stack trace from previous location ---
+2025-08-11T13:30:28.6926181Z    at System.CommandLine.Builder.CommandLineBuilderExtensions.<>c__DisplayClass16_0.<<UseParseDirective>b__0>d.MoveNext()
+2025-08-11T13:30:28.6927112Z --- End of stack trace from previous location ---
+2025-08-11T13:30:28.6927978Z    at System.CommandLine.Builder.CommandLineBuilderExtensions.<>c.<<RegisterWithDotnetSuggest>b__5_0>d.MoveNext()
+2025-08-11T13:30:28.6928859Z --- End of stack trace from previous location ---
+2025-08-11T13:30:28.6929843Z    at System.CommandLine.Builder.CommandLineBuilderExtensions.<>c__DisplayClass8_0.<<UseExceptionHandler>b__0>d.MoveNext()
+2025-08-11T13:30:28.7021773Z ##[error]Unexpected end of JSON input
+2025-08-11T13:30:28.7291849Z Post job cleanup.
+2025-08-11T13:30:28.9048826Z [command]/usr/bin/git version
+2025-08-11T13:30:28.9146612Z git version 2.50.1
+2025-08-11T13:30:28.9216400Z Temporarily overriding HOME='/home/runner/work/_temp/d488de21-fdfb-4c46-8435-e14cde83844f' before making global git config changes
+2025-08-11T13:30:28.9226649Z Adding repository directory to the temporary git global config as a safe directory
+2025-08-11T13:30:28.9238375Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/PostgresTest/PostgresTest
+2025-08-11T13:30:28.9315976Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2025-08-11T13:30:28.9381935Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2025-08-11T13:30:29.0052266Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2025-08-11T13:30:29.0125024Z http.https://github.com/.extraheader
+2025-08-11T13:30:29.0153570Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2025-08-11T13:30:29.0240213Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2025-08-11T13:30:29.0819511Z Cleaning up orphan processes
+ChatGPT said:
+
+Got it—this stack trace is classic “NBGV can’t parse your version file at that commit.”
+
+Key bits from the log:
+
+    nbgv get-version …
+
+    InvalidOperationException: Unable to get version from commit …
+
+    Inner: 'semanticVersion' cannot be an empty string ("")
+
+    Then your step fails trying to parse JSON because nbgv didn’t produce any (so “Unexpected end of JSON input”).
+
+That almost always means one of these on the target branch you’re releasing from:
+
+    A version.json exists but version is empty ("") or invalid.
+
+    There are multiple version.json files and one of them has a bad/empty version.
+
+    The file has comments or trailing commas and the parser chokes (NBGV expects strict JSON).
+
+    The repo at that commit has no version file anywhere NBGV can find.
+
+Given your earlier sample had // comments in publicReleaseRefSpec, #3 is a strong suspect.
+Quick fix checklist (1–3 minutes)
+
+On the failing branch (e.g., develop):
+
+    Find all version files:
+
+git ls-files | grep -E '(^|/)(version\.json)$' || true
+
+    Inspect each one and check the version:
+
+for f in $(git ls-files | grep -E '(^|/)(version\.json)$'); do
+  echo "== $f ==" && cat "$f" && echo && jq -r '.version // "MISSING"' "$f"
+done
+
+You’re looking for:
+
+    Exactly one authoritative file (typically the root).
+
+    A non-empty string like "1.0" or "1.0.0".
+
+    Ensure strict JSON (remove comments/trailing commas). A safe, clean file for you is:
+
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/Nerdbank.GitVersioning/main/src/NerdBank.GitVersioning/version.schema.json",
+  "version": "1.0",
+  "publicReleaseRefSpec": [
+    "^refs/heads/main$",
+    "^refs/heads/v\\d+\\.\\d+$"
+  ],
+  "release": {
+    "branchName": "v{version}",
+    "versionIncrement": "minor",
+    "firstUnstableTag": "alpha"
+  }
+}
+
+    Commit the fix on that branch and rerun:
+
+git add version.json
+git commit -m "Fix NBGV version.json (strict JSON, valid version)"
+git push
+
+Add a defensive check in your workflow (optional but handy)
+
+Right after checkout, validate the file before calling NBGV:
+
+- name: Validate version.json
+  run: |
+    set -euo pipefail
+    FILES=$(git ls-files | grep -E '(^|/)(version\.json)$' || true)
+    if [[ -z "$FILES" ]]; then
+      echo "❌ No version.json found in repo."
+      exit 1
+    fi
+    for f in $FILES; do
+      echo "Checking $f"
+      # strict JSON parse + non-empty .version
+      jq -e '.version | strings and length > 0' "$f" >/dev/null || {
+        echo "❌ $f has missing/empty .version or invalid JSON."
+        cat "$f" || true
+        exit 1
+      }
+    done
+
+Why this happened
+
+    nbgv walks history to locate a version file. If it finds one but the "version" field is "" (empty) or the JSON can’t be parsed cleanly, you’ll get exactly the semanticVersion … empty string error.
+
+    The “Unexpected end of JSON input” at the end is your workflow trying to parse nbgv output that never came because nbgv crashed.
+
+If you paste the version.json that’s on the failing branch (or confirm there’s only one copy), I’ll patch it line-for-line.
+You said:
+this is my version.json file:
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/Nerdbank.GitVersioning/main/src/NerdBank.GitVersioning/version.schema.json",
+  "version": "1.0",
+  "publicReleaseRefSpec": [
+    "^refs/heads/main$",
+    "^refs/heads/v\\d+\\.\\d+$"
+  ],
+  "release": {
+    "branchName": "v{version}",
+    "versionIncrement": "minor",
+    "firstUnstableTag": "alpha"
+  }
+}
+ChatGPT said:
+
+Thanks for the log—this tells us exactly where to look.
+
+That semanticVersion … cannot be an empty string error means that on the commit NBGV is reading (that SHA in the log), the effective version.json it found had either:
+
+    an empty "version": "", or
+
+    invalid JSON (e.g., comments/trailing commas) that parsed into an empty semantic version, or
+
+    NBGV picked up a different version.json elsewhere in the tree that’s bad.
+
+Your snippet looks fine, so this is almost certainly a bad copy elsewhere or in history (and I remember your earlier workflow that wrote back to version.json—if that ran with an empty value once, it may have committed "").
+
+Here’s the fastest way to pinpoint and fix it.
+1) Confirm which file NBGV is actually seeing
+
+Add this temporary step right after checkout in the called workflow and re-run:
+
+- name: Debug version.json files
+  run: |
+    echo "PWD=$(pwd)"
+    echo "Listing all version.json files tracked by git:"
+    git ls-files | grep -E '(^|/)(version\.json)$' || true
+    echo "Root version.json (if present):"
+    [ -f version.json ] && sed -n '1,200p' version.json || echo "no root version.json"
+    echo "Search for empty version fields:"
+    git grep -n '"version"\s*:\s*""' || true
+
+If you see more than one version.json, open each.
+2) Inspect the exact commit that failed (optional but useful)
+
+From your machine (or a step):
+
+# show the version.json content at the failing commit
+git show 625341b41ec5a65dc4d7ec78e91770573952fc61:version.json
+
+If that shows "version": "" or non-strict JSON, that’s the smoking gun.
+3) Fix it on the branch you’re releasing from
+
+Keep strict JSON (no // comments, no trailing commas), and ensure version is non-empty (e.g., "1.0" is fine):
+
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/Nerdbank.GitVersioning/main/src/NerdBank.GitVersioning/version.schema.json",
+  "version": "1.0",
+  "publicReleaseRefSpec": [
+    "^refs/heads/main$",
+    "^refs/heads/v\\d+\\.\\d+$"
+  ],
+  "release": {
+    "branchName": "v{version}",
+    "versionIncrement": "minor",
+    "firstUnstableTag": "alpha"
+  }
+}
+
+Then commit/push:
+
+git add version.json
+git commit -m "Fix NBGV version.json (strict JSON, non-empty version)"
+git push
+
+If there are multiple version.json files, either delete the extras or make sure they all have valid version values (the one nearest your project path wins).
+4) (Nice-to-have) Add a pre-check so failures are clearer
+
+Keep this step (or similar) before running the dotnet/nbgv action:
+
+- name: Validate version.json (strict + non-empty)
+  run: |
+    set -euo pipefail
+    FILES=$(git ls-files | grep -E '(^|/)(version\.json)$' || true)
+    if [[ -z "$FILES" ]]; then
+      echo "❌ No version.json found."
+      exit 1
+    fi
+    for f in $FILES; do
+      echo "Checking $f"
+      jq -e '.version | strings and length > 0' "$f" >/dev/null || {
+        echo "❌ $f has missing/empty .version or invalid JSON."
+        sed -n '1,120p' "$f" || true
+        exit 1
+      }
+    done
+
+Run again. If it still fails, send me the output from the debug step (list of version.json files and any empty matches), and I’ll zero in on the exact file/commit causing it.
+You said:
+1s
+Run actions/checkout@v4
+Syncing repository: Stillpoint-Software/PostgresTest
+Getting Git version info
+Temporarily overriding HOME='/home/runner/work/_temp/01ab6cc5-c2a1-41dd-93eb-41d80a58fa53' before making global git config changes
+Adding repository directory to the temporary git global config as a safe directory
+/usr/bin/git config --global --add safe.directory /home/runner/work/PostgresTest/PostgresTest
+Deleting the contents of '/home/runner/work/PostgresTest/PostgresTest'
+Initializing the repository
+Disabling automatic garbage collection
+Setting up auth
+Fetching the repository
+Determining the checkout info
+/usr/bin/git sparse-checkout disable
+/usr/bin/git config --local --unset-all extensions.worktreeConfig
+Checking out the ref
+/usr/bin/git log -1 --format=%H
+e2aca887d3d8ea3f422f349daf0ae7d2992e8405
+0s
+Run echo "***"
+***
+Listing all version.json files tracked by git:
+version.json
+Root version.json (if present):
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/Nerdbank.GitVersioning/main/src/NerdBank.GitVersioning/version.schema.json",
+  "version": "1.0",
+  "publicReleaseRefSpec": [
+    "^refs/heads/main$",
+    "^refs/heads/v\\d+\\.\\d+$"
+  ],
+  "release": {
+    "branchName": "v{version}",
+    "versionIncrement": "minor",
+    "firstUnstableTag": "alpha"
+  }
+}Search for empty version fields:
+15s
+Run dotnet/nbgv@v0.4.2
+/usr/bin/dotnet tool update -g nbgv --version 3.8.38-alpha
+Skipping NuGet package signature verification.
+Tool 'nbgv' was successfully updated from version '3.7.115' to version '3.8.38-alpha'.
+/home/runner/.dotnet/tools/nbgv get-version -f json -p .
+Unhandled exception: System.InvalidOperationException: Unable to get version from commit: 625341b41ec5a65dc4d7ec78e91770573952fc61
+ ---> System.ArgumentException: 'semanticVersion' cannot be an empty string ("") or start with the null character. (Parameter 'semanticVersion')
+   at Validation.Requires.NotNullOrEmpty(String value, String parameterName)
+   at Nerdbank.GitVersioning.SemanticVersion.TryParse(String semanticVersion, SemanticVersion& version)
+   at Nerdbank.GitVersioning.SemanticVersionJsonConverter.ReadJson(JsonReader reader, Type objectType, Object existingValue, JsonSerializer serializer)
+   at Newtonsoft.Json.Serialization.JsonSerializerInternalReader.DeserializeConvertable(JsonConverter converter, JsonReader reader, Type objectType, Object existingValue)
+   at Newtonsoft.Json.Serialization.JsonSerializerInternalReader.SetPropertyValue(JsonProperty property, JsonConverter propertyConverter, JsonContainerContract containerContract, JsonProperty containerProperty, JsonReader reader, Object target)
+   at Newtonsoft.Json.Serialization.JsonSerializerInternalReader.PopulateObject(Object newObject, JsonReader reader, JsonObjectContract contract, JsonProperty member, String id)
+   at Newtonsoft.Json.Serialization.JsonSerializerInternalReader.CreateObject(JsonReader reader, Type objectType, JsonContract contract, JsonProperty member, JsonContainerContract containerContract, JsonProperty containerMember, Object existingValue)
+   at Newtonsoft.Json.Serialization.JsonSerializerInternalReader.CreateValueInternal(JsonReader reader, Type objectType, JsonContract contract, JsonProperty member, JsonContainerContract containerContract, JsonProperty containerMember, Object existingValue)
+   at Newtonsoft.Json.Serialization.JsonSerializerInternalReader.Deserialize(JsonReader reader, Type objectType, Boolean checkAdditionalContent)
+   at Newtonsoft.Json.JsonSerializer.DeserializeInternal(JsonReader reader, Type objectType)
+   at Newtonsoft.Json.JsonSerializer.Deserialize(JsonReader reader, Type objectType)
+   at Newtonsoft.Json.JsonConvert.DeserializeObject(String value, Type type, JsonSerializerSettings settings)
+   at Newtonsoft.Json.JsonConvert.DeserializeObject[T](String value, JsonSerializerSettings settings)
+   at Nerdbank.GitVersioning.VersionFile.TryReadVersionJsonContent(String jsonContent, String repoRelativeBaseDirectory)
+   at Nerdbank.GitVersioning.Managed.ManagedVersionFile.GetVersion(GitCommit commit, String repoRelativeProjectDirectory, Dictionary2 blobVersionCache, String& actualDirectory)
+   at Nerdbank.GitVersioning.Managed.GitExtensions.GitWalkTracker.GetVersion(GitCommit commit)
+   --- End of inner exception stack trace ---
+   at Nerdbank.GitVersioning.Managed.GitExtensions.GitWalkTracker.GetVersion(GitCommit commit)
+   at Nerdbank.GitVersioning.Managed.GitExtensions.CommitMatchesVersion(GitCommit commit, SemanticVersion expectedVersion, Position comparisonPrecision, GitWalkTracker tracker)
+   at Nerdbank.GitVersioning.Managed.GitExtensions.<>c__DisplayClass3_0.<GetVersionHeight>b__0(GitCommit c)
+   at Nerdbank.GitVersioning.Managed.GitExtensions.<GetCommitHeight>g__TryCalculateHeight|4_0(GitCommit commit, <>c__DisplayClass4_0&)
+   at Nerdbank.GitVersioning.Managed.GitExtensions.GetCommitHeight(GitRepository repository, GitCommit startingCommit, GitWalkTracker tracker, Func2 continueStepping)
+   at Nerdbank.GitVersioning.Managed.GitExtensions.GetHeight(ManagedGitContext context, Func2 continueStepping)
+   at Nerdbank.GitVersioning.Managed.GitExtensions.GetVersionHeight(ManagedGitContext context, Version baseVersion)
+   at Nerdbank.GitVersioning.Managed.ManagedGitContext.CalculateVersionHeight(VersionOptions committedVersion, VersionOptions workingVersion)
+   at Nerdbank.GitVersioning.VersionOracle..ctor(GitContext context, ICloudBuild cloudBuild, Nullable1 overrideVersionHeightOffset)
+   at Nerdbank.GitVersioning.Tool.Program.OnGetVersionCommand(String project, String[] metadata, String format, String variable, String commitish) in D:\a\Nerdbank.GitVersioning\Nerdbank.GitVersioning\src\nbgv\Program.cs:line 437
+   at System.CommandLine.Handler.<>c__DisplayClass17_05.<SetHandler>b__0(InvocationContext context)
+   at System.CommandLine.Invocation.AnonymousCommandHandler.InvokeAsync(InvocationContext context)
+   at System.CommandLine.Invocation.AnonymousCommandHandler.SyncUsingAsync(InvocationContext context)
+   at System.CommandLine.Invocation.AnonymousCommandHandler.Invoke(InvocationContext context)
+   at System.CommandLine.Invocation.InvocationPipeline.<>c__DisplayClass4_0.<<BuildInvocationChain>b__0>d.MoveNext()
+--- End of stack trace from previous location ---
+   at System.CommandLine.Builder.CommandLineBuilderExtensions.<>c__DisplayClass17_0.<<UseParseErrorReporting>b__0>d.MoveNext()
+--- End of stack trace from previous location ---
+   at System.CommandLine.Builder.CommandLineBuilderExtensions.<>c__DisplayClass12_0.<<UseHelp>b__0>d.MoveNext()
+--- End of stack trace from previous location ---
+   at System.CommandLine.Builder.CommandLineBuilderExtensions.<>c__DisplayClass22_0.<<UseVersionOption>b__0>d.MoveNext()
+--- End of stack trace from previous location ---
+   at System.CommandLine.Builder.CommandLineBuilderExtensions.<>c__DisplayClass19_0.<<UseTypoCorrections>b__0>d.MoveNext()
+--- End of stack trace from previous location ---
+   at System.CommandLine.Builder.CommandLineBuilderExtensions.<>c.<<UseSuggestDirective>b__18_0>d.MoveNext()
+--- End of stack trace from previous location ---
+   at System.CommandLine.Builder.CommandLineBuilderExtensions.<>c__DisplayClass16_0.<<UseParseDirective>b__0>d.MoveNext()
+--- End of stack trace from previous location ---
+   at System.CommandLine.Builder.CommandLineBuilderExtensions.<>c.<<RegisterWithDotnetSuggest>b__5_0>d.MoveNext()
+--- End of stack trace from previous location ---
+   at System.CommandLine.Builder.CommandLineBuilderExtensions.<>c__DisplayClass8_0.<<UseExceptionHandler>b__0>d.MoveNext()
+Error: Unexpected end of JSON input
+ChatGPT said:
+
+Yep — this is almost certainly a bad version.json in history. Your HEAD file is fine (we saw it), but NBGV walks history to compute version height and dies when it hits commit 625341b where version was committed as "" (or the JSON was malformed). Hence:
+
+    Unable to get version from commit: 625341b…
+    'semanticVersion' cannot be an empty string
+
+You’ve got two paths: a clean fix (rewrite history once) and a quick workaround for today’s run.
+A) Proper fix (one-time history repair)
+
+Goal: replace any empty semantic version in historical version.json with a valid one (e.g., "1.0").
+
+    Clone with full history and install git-filter-repo (recommended over filter-branch).
+
+git clone --mirror https://github.com/Stillpoint-Software/PostgresTest.git
+cd PostgresTest.git
+# Install git-filter-repo if needed
+# macOS: brew install git-filter-repo
+# Linux: pipx install git-filter-repo   (or pip install --user git-filter-repo)
+
+    Create a replace file to fix empty versions (and strip any // comments if you ever had them):
+
+cat > ../nbgv-rewrites.txt <<'EOF'
+# Replace empty version "" with "1.0"
+regex:"\"version\"\\s*:\\s*\"\"":"\"version\": \"1.0\""
+# Optional: remove line comments starting with // (very conservative)
+regex:"//.*$":""
+EOF
+
+    Rewrite history (affects all branches/tags in the mirror):
+
+git filter-repo --replace-text ../nbgv-rewrites.txt --path version.json --force
+
+    Push the repaired history (force push; coordinate with collaborators/CI):
+
+git push --force --all
+git push --force --tags
+
+    In your local non-mirror clones, re-clone or git fetch --all && git reset --hard origin/<branch> to align with the rewritten history.
+
+This permanently removes the bad content from old commits, so NBGV can walk history without choking.
+B) Quick CI workaround (no history rewrite)
+
+If you need to cut a release right now, you can avoid the bad commit by using a shallow checkout deep enough to include your release changes but not so deep that it reaches 625341b.
+
+In your called workflow’s checkout step:
+
+- uses: actions/checkout@v4
+  with:
+    ref: ${{ inputs.target_branch }}
+    fetch-depth: 100      # adjust so the bad commit is outside the fetched range
+    token: ${{ secrets.GH_TOKEN }}
+
+Notes:
+
+    NBGV prefers full history; with shallow history, the height calculation may be lower. For tagging a release, this is usually fine because your tag will still be vX.Y.Z from NBGV at HEAD.
+
+    Later, do the proper fix so you can go back to fetch-depth: 0.
+
+Verify the culprit (optional but helpful)
+
+From a full clone of the branch you’re releasing from:
+
+# Show the version.json at the failing commit
+git show 625341b41ec5a65dc4d7ec78e91770573952fc61:version.json
+
+# Find commits that introduced an empty version
+git log -G '"version"\s*:\s*""' -- version.json
+
+If you see "version": "" or non-strict JSON, that’s your smoking gun.
+Extra guard in the workflow (keep it)
+
+Since you already added the debug/validate step, keep a stricter one right before running NBGV so failures are clearer:
+
+- name: Validate version.json (strict + non-empty)
+  run: |
+    set -euo pipefail
+    FILES=$(git ls-files | grep -E '(^|/)(version\.json)$' || true)
+    if [[ -z "$FILES" ]]; then
+      echo "❌ No version.json found."; exit 1
+    fi
+    for f in $FILES; do
+      echo "Checking $f"
+      jq -e '.version | strings and length > 0' "$f" >/dev/null || {
+        echo "❌ $f has missing/empty .version or invalid JSON."
+        sed -n '1,120p' "$f" || true
+        exit 1
+      }
+    done
+
+Recommendation
+
+    Use B (shallow) to get today’s release out if you’re blocked.
+
+    Schedule A (history repair) soon after. It’s the durable fix and prevents this from popping up again on any branch/tag that traverses that commit.
+
+If you want, tell me which route you’re taking and I’ll hand you the exact commands tailored to your repo/branch list.
+You said:
+I found the "version": "" so how do I fix?
+ChatGPT said:
+
+Nice catch! Since you’ve confirmed there’s a commit where "version": "", the fix is to rewrite that bad content in history so NBGV can walk the graph without crashing.
+
+You’ve got two approaches:
+Option A — Permanent fix (recommended): rewrite history with git filter-repo
+
+This corrects the bad version.json in the offending commit(s) across your repo.
+
+    Clone as a mirror (safe sandbox to rewrite):
+
+git clone --mirror https://github.com/Stillpoint-Software/PostgresTest.git
+cd PostgresTest.git
+
+    Create a replace rules file (change empty to a valid base, e.g. 1.0):
+
+cat > ../nbgv-rewrites.txt <<'EOF'
+# Fix NBGV: replace empty version "" with "1.0"
+regex:"\"version\"\\s*:\\s*\"\"":"\"version\": \"1.0\""
+EOF
+
+    Run the rewrite
+    If version.json is only at the root:
+
+git filter-repo --replace-text ../nbgv-rewrites.txt --path version.json --force
+
+If you might have copies in subfolders too, use globs:
+
+git filter-repo --replace-text ../nbgv-rewrites.txt \
+  --path-glob 'version.json' --path-glob '*/version.json' --force
+
+    Force-push the repaired history (coordinate with anyone who has clones!)
+
+git push --force --all
+git push --force --tags
+
+    Verify (fresh clone or after resetting a normal clone):
+
+git clone https://github.com/Stillpoint-Software/PostgresTest.git
+cd PostgresTest
+dotnet tool install -g nbgv --version 3.8.38-alpha
+nbgv get-version -p .
+
+    Heads-up: History rewrite means collaborators must re-clone or git fetch --all && git reset --hard origin/<branch> to align.
+
+Option B — Temporary workaround (to unblock today)
+
+If you can’t rewrite history right now, avoid fetching the bad commit in CI:
+
+- uses: actions/checkout@v4
+  with:
+    ref: ${{ inputs.target_branch }}
+    fetch-depth: 100            # set low enough so the bad commit isn’t in the range
+    token: ${{ secrets.GH_TOKEN }}
+
+This lets nbgv compute a version without hitting the broken commit, at the cost of a smaller (possibly off-by-some) version height. When convenient, come back and do Option A.
+Prevent it from happening again
+
+    Keep version.json strict JSON (no // comments, no trailing commas).
+
+    Never write computed versions back into version.json in CI (you’ve removed that already).
+
+    Use nbgv set-version or nbgv prepare-release for intentional baseline changes.
+
+If you want, tell me whether your version.json lives only at the root or also in subfolders—I’ll tailor the exact git filter-repo command for your tree.
+You said:
+Do I need the Directory.build.props or the Directory.build.targests?
+ChatGPT said:
+
+Short answer: use Directory.Build.props, not Directory.Build.targets.
+
+    NBGV stamps your assemblies via MSBuild targets that come with the NuGet package.
+
+    To enable that across your repo, you just need a PackageReference somewhere that applies to your projects. The conventional, repo-wide place is Directory.Build.props.
+
+    You do not need a custom Directory.Build.targets for NBGV—only use a .targets file if you want extra, non-NBGV automation (e.g., custom pack/push rules).
+
+Recommended minimal setup
+
+Directory.Build.props (at the solution root):
+
+<Project>
+  <ItemGroup>
+    <PackageReference Include="Nerdbank.GitVersioning"
+                      Version="3.8.38-alpha"
+                      PrivateAssets="all" />
+  </ItemGroup>
+</Project>
+
+That’s it. With your valid version.json, builds/pack will pick up the computed version.
+If you use Central Package Management
+
+    Put the version in Directory.Packages.props:
+
+    <Project>
+      <ItemGroup>
+        <PackageVersion Include="Nerdbank.GitVersioning" Version="3.8.38-alpha" />
+      </ItemGroup>
+    </Project>
+
+    Keep the reference in Directory.Build.props (as above) or in individual projects; the version comes from Directory.Packages.props.
+
+When would I add Directory.Build.targets?
+
+Only if you want repo-wide customizations unrelated to NBGV itself, e.g.,
+
+    hook a post-pack step,
+
+    set default ContinuousIntegrationBuild or other props,
+
+    add conditional PublicRelease=true logic (you can also pass that at CLI pack time).
+
+If you want, I can review your current props/targets and trim anything that isn’t needed for NBGV.
+You said:
+trying to run create-release to do an alpha release on the develop branch, but getting this error.
+0s
+Run PRE=""
+  PRE=""
+  BR="develop"
+  if [[ -n "$PRE" && "$BR" == "main" ]]; then
+    echo "❌ Computed PRERELEASE on 'main'. Cut prereleases from develop or hotfix/*."
+    exit 1
+  fi
+  if [[ -z "$PRE" && ( "$BR" == "develop" || "$BR" =~ ^hotfix/ ) ]]; then
+    echo "❌ Computed STABLE on '$BR'. Stable releases should come from main or vX.Y."
+    exit 1
+  fi
+  shell: /usr/bin/bash -e {0}
+❌ Computed STABLE on 'develop'. Stable releases should come from main or vX.Y.
+Error: Process completed with exit code 1.
+ChatGPT said:
+
+You’re hitting the guard because NBGV says your develop build is stable (PRE=""). That happens when the branch’s version.json doesn’t carry a prerelease tag. Your current file:
+
+"version": "1.0"
+
+…produces a stable version. To cut an alpha from develop, give that branch a prerelease baseline.
+Fastest fix (recommended)
+
+Run this on the develop branch:
+
+git checkout develop
+
+# pick the next line you want:
+nbgv set-version 1.1-alpha     # common: next minor alpha
+# or nbgv set-version 1.0-alpha  # if you really want 1.0 alpha
+
+git commit -am "Set prerelease baseline on develop"
+git push
+
+Now rerun the workflow. NBGV will output PrereleaseVersion=-alpha, your guard will pass, and the tag will be v1.1.0-alpha (or v1.0.0-alpha).
+Alternative (structure your flow)
+
+    If you use nbgv prepare-release after a stable ship, run it from develop (not main). That will:
+
+        create v1.0 (stable) from develop, and
+
+        bump develop to 1.1.0-alpha automatically (using your firstUnstableTag: alpha).
+
+    If you prefer main for releases, just remember: after each stable release, run nbgv set-version X.Y-alpha on develop so it stays prerelease.
+
+Why this happened
+
+    publicReleaseRefSpec controls whether build metadata is hidden on certain refs; it does not add -alpha.
+
+    release.firstUnstableTag is applied by nbgv prepare-release (it edits version.json); it doesn’t affect day-to-day builds unless you’ve run prepare-release on that branch.
+
+If you want, tell me which alpha you want (e.g., 1.1-alpha), and I’ll hand you the exact commands again plus a tiny check step to print the NBGV outputs before the guard for easier debugging.
+You said:
+ok, I want to be able to do this with the create-release.yaml file.
+ChatGPT said:
+
+Perfect—let’s make your create-release.yaml automatically cut an alpha from develop even when the branch is accidentally on a stable baseline.
+What we’ll do
+
+    After we get NBGV outputs, if we’re on develop and PrereleaseVersion is empty, we’ll:
+
+        compute the next minor (from SimpleVersion),
+
+        run nbgv set-version {nextMinor}-alpha,
+
+        commit & push the updated version.json,
+
+        re-run the dotnet/nbgv action to refresh outputs,
+
+        continue to tag & create the Release.
+
+Drop-in workflow (key parts)
+
+# ... your on:, permissions:, jobs: headers unchanged ...
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target branch (full history for NBGV)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.target_branch }}
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Nerdbank.GitVersioning (install + outputs)
+        id: nbgv
+        uses: dotnet/nbgv@v0.4.2
+        with:
+          toolVersion: 3.8.38-alpha
+
+      # 👇 Ensure develop is on a prerelease baseline; auto-bump to next minor -alpha if not
+      - name: Ensure develop has alpha baseline (auto)
+        if: ${{ inputs.target_branch == 'develop' }}
+        env:
+          SIMPLE: ${{ steps.nbgv.outputs.SimpleVersion }}
+          PRE: ${{ steps.nbgv.outputs.PrereleaseVersion }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${PRE}" ]]; then
+            echo "develop is STABLE; setting next-minor -alpha baseline…"
+            IFS='.' read -r MAJOR MINOR PATCH <<< "${SIMPLE}"
+            NEXT_MINOR=$((MINOR+1))
+            NEW="${MAJOR}.${NEXT_MINOR}-alpha"
+            echo "New baseline: ${NEW}"
+
+            nbgv set-version "${NEW}"
+
+            git config user.name "${{ github.actor }}"
+            git config user.email "${{ github.actor }}@users.noreply.github.com"
+            git add version.json
+            git commit -m "chore(nbgv): set develop baseline to ${NEW}"
+            git push origin HEAD:${{ inputs.target_branch }}
+          else
+            echo "develop already on prerelease (${PRE}); nothing to do."
+          fi
+
+      # Recompute NBGV outputs AFTER a possible baseline change
+      - name: Nerdbank.GitVersioning (refresh)
+        id: nbgv2
+        uses: dotnet/nbgv@v0.4.2
+        with:
+          toolVersion: 3.8.38-alpha
+
+      # Guard rails now use refreshed values
+      - name: Guard: block prerelease from main; block stable from develop/hotfix/*
+        run: |
+          PRE="${{ steps.nbgv2.outputs.PrereleaseVersion }}"
+          BR="${{ inputs.target_branch }}"
+          if [[ -n "$PRE" && "$BR" == "main" ]]; then
+            echo "❌ Computed PRERELEASE on 'main'. Cut prereleases from develop or hotfix/*."
+            exit 1
+          fi
+          if [[ -z "$PRE" && ( "$BR" == "develop" || "$BR" =~ ^hotfix/ ) ]]; then
+            echo "❌ Computed STABLE on '$BR'. Stable releases should come from main or vX.Y."
+            exit 1
+          fi
+
+      - name: Tag current commit with NBGV
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          nbgv tag || echo "Tag may already exist locally."
+          git push origin "v{{ steps.nbgv2.outputs.NuGetPackageVersion }}" || echo "Tag already exists on remote."
+        env:
+          # workaround for YAML interpolation in bash heredocs
+          STEPS_NUGET: ${{ steps.nbgv2.outputs.NuGetPackageVersion }}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          TAG="v${{ steps.nbgv2.outputs.NuGetPackageVersion }}"
+          PRE="${{ steps.nbgv2.outputs.PrereleaseVersion }}"
+          BR="${{ inputs.target_branch }}"
+          FLAGS=()
+          [[ -n "$PRE" ]] && FLAGS+=(--prerelease)
+          if [[ -z "$PRE" && ( "$BR" == "main" || "$BR" =~ ^v[0-9]+\.[0-9]+$ ) ]]; then
+            FLAGS+=(--latest)
+          fi
+          echo "Creating release ${TAG} from '${BR}'"
+          gh release create "${TAG}" --title "${TAG}" --generate-notes "${FLAGS[@]}"
+
+Notes & assumptions
+
+    This commits to develop if it needs to set the baseline. Ensure your branch protections allow CI to push (or switch to opening a PR if required—I can wire that up too).
+
+    The baseline we set is next minor from SimpleVersion (e.g., 1.0.0 → 1.1-alpha). If you’d rather keep the same minor (e.g., 1.0-alpha), change:
+
+NEW="${MAJOR}.${NEXT_MINOR}-alpha"
+
+to:
+
+    NEW="${MAJOR}.${MINOR}-alpha"
+
+    We re-run the dotnet/nbgv step so the guard/tag/release use the updated values.
+
+Want me to drop this into your full workflow file with your current headers untouched?
+You said:
+what happens if the branch is a hotfix
+ChatGPT said:
+
+Great question. With your current workflow as written:
+
+    If the branch is hotfix/* and NBGV computes a prerelease (e.g., -alpha), the guard passes and the release proceeds.
+
+    If the branch is hotfix/* and NBGV computes a stable version (no -alpha), the guard fails with:
+
+        “Computed STABLE on 'hotfix/...'. Stable releases should come from main or vX.Y.”
+
+So hotfixes are allowed only as prereleases right now.
+
+You’ve got two clean ways to handle hotfix branches depending on your desired policy:
+Option 1 — Keep hotfix as prerelease-only (auto-bump to patch -alpha)
+
+If a hotfix branch is on a stable baseline, auto-set a patch alpha baseline and continue.
+
+Add this step after your first dotnet/nbgv step and before you re-run dotnet/nbgv:
+
+- name: Ensure hotfix/* has alpha baseline (auto)
+  if: ${{ startsWith(inputs.target_branch, 'hotfix/') }}
+  env:
+    SIMPLE: ${{ steps.nbgv.outputs.SimpleVersion }}
+    PRE: ${{ steps.nbgv.outputs.PrereleaseVersion }}
+  run: |
+    set -euo pipefail
+    if [[ -z "${PRE}" ]]; then
+      echo "hotfix/* is STABLE; setting next-patch -alpha baseline…"
+      IFS='.' read -r MAJOR MINOR PATCH <<< "${SIMPLE}"
+      NEXT_PATCH=$((PATCH+1))
+      NEW="${MAJOR}.${MINOR}.${NEXT_PATCH}-alpha"
+      echo "New baseline: ${NEW}"
+      nbgv set-version "${NEW}"
+      git config user.name "${{ github.actor }}"
+      git config user.email "${{ github.actor }}@users.noreply.github.com"
+      git add version.json
+      git commit -m "chore(nbgv): set hotfix baseline to ${NEW}"
+      git push origin HEAD:${{ inputs.target_branch }}
+    else
+      echo "hotfix/* already prerelease (${PRE}); nothing to do."
+    fi
+
+Keep your existing guard rails as-is. The re-run of dotnet/nbgv will now produce -alpha, and the job proceeds.
+Option 2 — Allow stable directly from hotfix/*
+
+If you prefer to ship a stable patch right off the hotfix branch, relax the guard:
+
+Change the guard step to only block stable from develop, not from hotfix/*:
+
+# old:
+if [[ -z "$PRE" && ( "$BR" == "develop" || "$BR" =~ ^hotfix/ ) ]]; then
+# new:
+if [[ -z "$PRE" && "$BR" == "develop" ]]; then
+
+You can keep your “latest” rule as-is (only mark --latest for stable from main or vX.Y). That way, a stable release from hotfix/* won’t flip the “Latest” badge until you merge/tag on main or a servicing vX.Y branch.
+Which should you pick?
+
+    Want hotfixes to go out as pre-release builds first? → Option 1 (auto set patch -alpha).
+
+    Want to occasionally ship an immediate stable patch off hotfix/*? → Option 2 (relax the guard).
+
+If you tell me which policy you want, I’ll splice the exact lines into your current YAML so you can paste-and-go.
+You said:
+what is the version of a hotfix?
+ChatGPT said:
+
+Short answer: a hotfix should bump the patch number.
+
+    If your last stable on the servicing line was 1.0.0, the hotfix release is 1.0.1.
+
+    While you’re testing on a hotfix branch, use a prerelease tag: 1.0.1-alpha.
+
+    When you ship, drop the suffix on the servicing branch (e.g., v1.0) and tag v1.0.1.
+
+Practical patterns (with your current version.json)
+
+    Prerelease on hotfix/*: 1.0.1-alpha, 1.0.2-alpha, …
+
+    Stable on servicing branch v1.0: 1.0.1, 1.0.2, …
+
+CLI examples
+
+From the hotfix branch (off v1.0):
+
+# set prerelease baseline for the new patch
+nbgv set-version 1.0.1-alpha
+git commit -am "hotfix: set 1.0.1-alpha baseline"
+git push
+
+When ready to ship, on v1.0 (after merging the hotfix):
+
+# stabilize (no suffix) and tag the release
+nbgv set-version 1.0.1
+git commit -am "hotfix: 1.0.1"
+git push
+nbgv tag
+git push --tags
+
+In your create-release workflow (auto mode)
+
+If you want CI to enforce this automatically for hotfix/*:
+
+    For prerelease builds, auto-bump to next patch -alpha (e.g., compute MAJOR.MINOR.(PATCH+1)-alpha and run nbgv set-version).
+
+    For stable hotfix releases (if you allow them directly from hotfix/*), either:
+
+        relax the guard and let NBGV produce a stable version, or
+
+        require merging to vX.Y first and run the release from there (cleanest).
+
+If you tell me whether you want hotfixes to be pre-release only or sometimes stable directly, I’ll drop the exact YAML you need.
+You said:
+bella,  let's go over the entire workflow as I think we are missing a github action to set the version for the create-release to use.
+
+the project action "Create_Release.yml" starts the process by calling the Shared Workflow action "create_new_release.yml".  After the the user, calls the "publish.yml" which calls the Shared Workflow action Publsh_new.yml.
+
+i have included the files for your review.
+
+Create_release.yml:
+﻿name: Create Release
+
+on:
+  workflow_dispatch:
+
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  prepare-release:
+    uses: Stillpoint-Software/shared-workflows/.github/workflows/create_new_release.yml@main
+    with:
+      target_branch: "${{ github.ref_name }}"
+    secrets: 
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+Create_new_release.yml:
+name: Create Release
+
+on:
+  workflow_call:
+    inputs:
+      target_branch:
+        description: 'Branch to release from (e.g., main, develop, hotfix/xyz, v1.2)'
+        type: string
+        required: true
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify target branch via API
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          BR="${{ inputs.target_branch }}"
+          URL="https://api.github.com/repos/${{ github.repository }}/branches/${BR}"
+          code=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" "$URL")
+          [[ "$code" == "200" ]] || { echo "❌ Branch not found on origin: $BR"; exit 1; }
+
+      - name: Checkout target branch (full history for NBGV)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+          ref: ${{ inputs.target_branch }}
+
+      - name: Debug version.json files
+        run: |
+          echo "PWD=$(pwd)"
+          echo "Listing all version.json files tracked by git:"
+          git ls-files | grep -E '(^|/)(version\.json)$' || true
+          echo "Root version.json (if present):"
+          [ -f version.json ] && sed -n '1,200p' version.json || echo "no root version.json"
+          echo "Search for empty version fields:"
+          git grep -n '"version"\s*:\s*""' || true
+          
+      - name: Nerdbank.GitVersioning (install + outputs)
+        id: nbgv
+        uses: dotnet/nbgv@v0.4.2
+        with:
+          toolVersion: 3.8.38-alpha
+
+      - name: Guard - block prerelease from main; block stable from develop/hotfix/*
+        run: |
+          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          BR="${{ inputs.target_branch }}"
+          if [[ -n "$PRE" && "$BR" == "main" ]]; then
+            echo "❌ Computed PRERELEASE on 'main'. Cut prereleases from develop or hotfix/*."
+            exit 1
+          fi
+          if [[ -z "$PRE" && ( "$BR" == "develop" || "$BR" =~ ^hotfix/ ) ]]; then
+            echo "❌ Computed STABLE on '$BR'. Stable releases should come from main or vX.Y."
+            exit 1
+          fi
+
+      - name: Tag current commit with NBGV
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          nbgv tag || echo "Tag may already exist locally."
+          git push origin "v${{ steps.nbgv.outputs.NuGetPackageVersion }}" || echo "Tag already exists on remote."
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          TAG="v${{ steps.nbgv.outputs.NuGetPackageVersion }}"
+          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          BR="${{ inputs.target_branch }}"
+          FLAGS=()
+          [[ -n "$PRE" ]] || FLAGS+=(--latest)  # latest only for stable
+          # Only mark latest for stable from main or servicing branches vX.Y
+          if [[ -n "$PRE" || ( "$BR" != "main" && ! "$BR" =~ ^v[0-9]+\.[0-9]+$ ) ]]; then
+            FLAGS=("${FLAGS[@]/--latest}")  # strip latest if conditions not met
+          fi
+          echo "Creating release ${TAG} from '${BR}'"
+          gh release create "${TAG}" --title "${TAG}" --generate-notes "${FLAGS[@]}"
+
+publish.yml:
+
+﻿name: Publish
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  set-config:
+    runs-on: ubuntu-latest
+
+    outputs:
+      build_configuration: ${{ steps.config.outputs.build_configuration }}
+
+    steps:
+      - name: Determine Release vs. Debug
+        id: config
+        run: |
+          # capture the branch name
+          BRANCH=${{ github.event.release.target_commitish }}
+          echo "Branch is '$BRANCH'"
+
+          if [[ "$BRANCH" == "main" && ( "${{ github.event.release.prerelease }}" == "false" || "${{ github.event_name }}" == "workflow_dispatch" ) ]]; then
+            echo "build_configuration=Release" >> $GITHUB_OUTPUT
+          else
+            echo "build_configuration=Debug" >> $GITHUB_OUTPUT
+          fi
+
+  publish:
+    needs: set-config
+    uses: Stillpoint-Software/shared-workflows/.github/workflows/publish_new.yml@main
+    with:
+      build_configuration: ${{ needs.set-config.outputs.build_configuration }}
+    secrets:
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+
+publish_new.yml:
+name: Publish New
+
+on:
+  workflow_call:
+    inputs:
+      build_configuration:
+        description: 'Build configuration'
+        required: true
+        type: string
+        default: 'Release'
+    secrets:
+      NUGET_API_KEY:
+        required: false
+
+env:
+  BRANCH_NAME: ${{ github.event.release.target_commitish }}
+  SOLUTION_NAME: ${{ vars.SOLUTION_NAME }}
+  DOTNET_VERSION: '9.0.x'
+  NUGET_SOURCE: 'https://api.nuget.org/v3/index.json'
+
+jobs:
+  build-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check Build Configuration
+      if: ${{ inputs.build_configuration == '' }}
+      run: |
+        echo "Invalid Build Configuration"
+        exit 1
+
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Ensure Nerdbank.GitVersioning tool is installed
+      run: |
+        if ! dotnet tool list -g | grep -q nbgv; then
+          dotnet tool install --global nbgv
+        else
+          dotnet tool update --global nbgv
+        fi
+
+    - name: Get version from Nerdbank.GitVersioning
+      id: nbgv
+      run: |
+        nbgv get-version --format json > nbgv.json
+        version=$(jq -r .NuGetPackageVersion nbgv.json)
+        echo "version_tag=$version" >> $GITHUB_ENV
+
+    - name: Get version from version.json
+      id: get_version
+      run: |
+        version=$(jq -r .version version.json)
+        echo "version=$version" >> $GITHUB_OUTPUT
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Restore Dependencies
+      run: dotnet restore ${{ env.SOLUTION_NAME }}
+
+    - name: Build
+      run: dotnet build --no-restore --configuration ${{ inputs.build_configuration }} ${{ env.SOLUTION_NAME }}
+
+    - name: Test
+      run: dotnet test --no-build --verbosity normal --configuration ${{ inputs.build_configuration }} ${{ env.SOLUTION_NAME }}
+
+    - name: Pack and Push
+      run: dotnet pack --no-build --configuration ${{inputs.build_configuration }} -p:PackageOutputPath=../../output --version-suffix "${{ env.VERSION_SUFFIX }}" -p:PackageSource='${{ env.NUGET_SOURCE }}' -p:PushAfterPack=true -p:PackageApiKey='${{ secrets.NUGET_API_KEY }}'
+ChatGPT said:
+
+You’re right—your flow is missing a step that sets the branch’s baseline version before tagging. Right now create_new_release.yml just reads whatever NBGV finds; if develop is still on a stable baseline, you get blocked.
+
+Below is a tight end-to-end patch so the flow is self-sufficient:
+What’s changing
+
+    create_new_release.yml
+
+        Add an auto-baseline step:
+
+            develop → next minor -alpha
+
+            hotfix/* → next patch -alpha
+
+            main or vX.Y → stable (strip prerelease if present)
+
+        Re-run the nbgv action to refresh outputs before guards/tagging.
+
+        Pass the token to checkout (so the tag push reuses creds).
+
+    publish_new.yml
+
+        Don’t pass a --version-suffix (you never set VERSION_SUFFIX).
+
+        Let NBGV set the package version.
+
+        Use -p:PublicRelease=true for stable releases only.
+
+        Push with dotnet nuget push.
+
+create_new_release.yml (drop-in)
+
+name: Create Release
+
+on:
+  workflow_call:
+    inputs:
+      target_branch:
+        description: 'Branch to release from (e.g., main, develop, hotfix/xyz, v1.2)'
+        type: string
+        required: true
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify target branch via API
+        env: { GH_TOKEN: ${{ secrets.GH_TOKEN }} }
+        run: |
+          set -euo pipefail
+          BR="${{ inputs.target_branch }}"
+          URL="https://api.github.com/repos/${{ github.repository }}/branches/${BR}"
+          code=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" "$URL")
+          [[ "$code" == "200" ]] || { echo "❌ Branch not found on origin: $BR"; exit 1; }
+
+      - name: Checkout target branch (full history for NBGV)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0         # use 100 ONLY if you still need to dodge a bad old commit
+          ref: ${{ inputs.target_branch }}
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Nerdbank.GitVersioning (install + outputs)
+        id: nbgv
+        uses: dotnet/nbgv@v0.4.2
+        with:
+          toolVersion: 3.8.38-alpha
+
+      # ✅ Auto-baseline setter so Create Release is self-sufficient
+      - name: Ensure expected baseline for branch
+        id: baseline
+        env:
+          BR: ${{ inputs.target_branch }}
+          SIMPLE: ${{ steps.nbgv.outputs.SimpleVersion }}
+          PRE: ${{ steps.nbgv.outputs.PrereleaseVersion }}
+        run: |
+          set -euo pipefail
+          changed=0
+
+          # helper to commit/push if we change version.json
+          commit_push() {
+            git config user.name "${{ github.actor }}"
+            git config user.email "${{ github.actor }}@users.noreply.github.com"
+            git add version.json
+            git commit -m "chore(nbgv): set baseline to $1"
+            git push origin HEAD:${{ inputs.target_branch }}
+          }
+
+          if [[ "$BR" == "develop" ]]; then
+            if [[ -z "$PRE" ]]; then
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$SIMPLE"
+              NEW="${MAJOR}.$((MINOR+1))-alpha"
+              echo "Setting develop baseline → $NEW"
+              nbgv set-version "$NEW"
+              commit_push "$NEW"
+              changed=1
+            fi
+          elif [[ "$BR" =~ ^hotfix/ ]]; then
+            if [[ -z "$PRE" ]]; then
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$SIMPLE"
+              NEW="${MAJOR}.${MINOR}.$((PATCH+1))-alpha"
+              echo "Setting hotfix baseline → $NEW"
+              nbgv set-version "$NEW"
+              commit_push "$NEW"
+              changed=1
+            fi
+          elif [[ "$BR" == "main" || "$BR" =~ ^v[0-9]+\.[0-9]+$ ]]; then
+            if [[ -n "$PRE" ]]; then
+              # Stabilize to SimpleVersion (no suffix) for main/servicing
+              NEW="$SIMPLE"
+              echo "Stabilizing $BR baseline → $NEW"
+              nbgv set-version "$NEW"
+              commit_push "$NEW"
+              changed=1
+            fi
+          fi
+
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+      # Recompute NBGV outputs AFTER any baseline change
+      - name: Nerdbank.GitVersioning (refresh)
+        if: ${{ steps.baseline.outputs.changed == '1' }}
+        id: nbgv2
+        uses: dotnet/nbgv@v0.4.2
+        with:
+          toolVersion: 3.8.38-alpha
+
+      # Use refreshed outputs when they exist
+      - name: Guard - policy checks
+        run: |
+          PRE="${{ steps.nbgv2.outputs.PrereleaseVersion || steps.nbgv.outputs.PrereleaseVersion }}"
+          BR="${{ inputs.target_branch }}"
+          if [[ -n "$PRE" && "$BR" == "main" ]]; then
+            echo "❌ Computed PRERELEASE on 'main'. Cut prereleases from develop/hotfix/*."
+            exit 1
+          fi
+          if [[ -z "$PRE" && ( "$BR" == "develop" || "$BR" =~ ^hotfix/ ) ]]; then
+            echo "❌ Computed STABLE on '$BR'. Stable releases should come from main or vX.Y."
+            exit 1
+          fi
+
+      - name: Tag current commit with NBGV
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          nbgv tag || echo "Tag may already exist locally."
+          TAG="v${{ steps.nbgv2.outputs.NuGetPackageVersion || steps.nbgv.outputs.NuGetPackageVersion }}"
+          git push origin "$TAG" || echo "Tag already exists on remote."
+
+      - name: Create GitHub Release
+        env: { GH_TOKEN: ${{ secrets.GH_TOKEN }} }
+        run: |
+          TAG="v${{ steps.nbgv2.outputs.NuGetPackageVersion || steps.nbgv.outputs.NuGetPackageVersion }}"
+          PRE="${{ steps.nbgv2.outputs.PrereleaseVersion || steps.nbgv.outputs.PrereleaseVersion }}"
+          BR="${{ inputs.target_branch }}"
+          FLAGS=()
+          [[ -n "$PRE" ]] && FLAGS+=(--prerelease)
+          if [[ -z "$PRE" && ( "$BR" == "main" || "$BR" =~ ^v[0-9]+\.[0-9]+$ ) ]]; then
+            FLAGS+=(--latest)
+          fi
+          echo "Creating release ${TAG} from '${BR}'"
+          gh release create "${TAG}" --title "${TAG}" --generate-notes "${FLAGS[@]}"
+
+publish_new.yml (pack/push via NBGV)
+
+name: Publish New
+
+on:
+  workflow_call:
+    inputs:
+      build_configuration:
+        description: 'Build configuration'
+        required: true
+        type: string
+        default: 'Release'
+    secrets:
+      NUGET_API_KEY:
+        required: true
+
+env:
+  SOLUTION_NAME: ${{ vars.SOLUTION_NAME }}
+  DOTNET_VERSION: '9.0.x'
+  NUGET_SOURCE: 'https://api.nuget.org/v3/index.json'
+
+jobs:
+  build-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: ${{ env.DOTNET_VERSION }} }
+
+      - name: Verify NBGV works (optional)
+        run: dotnet tool update -g nbgv --version 3.8.38-alpha && nbgv get-version -p . || true
+
+      - name: Restore
+        run: dotnet restore "${{ env.SOLUTION_NAME }}"
+
+      - name: Build
+        run: dotnet build --no-restore -c "${{ inputs.build_configuration }}" "${{ env.SOLUTION_NAME }}"
+
+      - name: Test
+        run: dotnet test --no-build -c "${{ inputs.build_configuration }}" "${{ env.SOLUTION_NAME }}"
+
+      - name: Decide PublicRelease (stable only)
+        id: rel
+        run: |
+          # When triggered by a GitHub Release, use its prerelease flag
+          if [[ "${{ github.event_name }}" == "release" && "${{ github.event.release.prerelease }}" == "false" ]]; then
+            echo "flag=-p:PublicRelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "flag=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Pack (version comes from NBGV)
+        run: |
+          mkdir -p artifacts
+          dotnet pack --no-build -c "${{ inputs.build_configuration }}" \
+            -o artifacts ${{ steps.rel.outputs.flag }}
+
+      - name: Push to NuGet
+        run: |
+          dotnet nuget push "artifacts/*.nupkg" \
+            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --source "${{ env.NUGET_SOURCE }}" \
+            --skip-duplicate
+
+Notes:
+
+    No --version-suffix: NBGV already set the package version.
+
+    For stable releases (the Release UI with “prerelease = false”), we pass -p:PublicRelease=true so the package is clean.
+
+    If you prefer, you can filter which projects to pack (e.g., src/My.Project/My.Project.csproj) instead of packing the whole solution.
+
+Why this solves the “missing action”
+
+    The auto-baseline step is the action you were missing. It proactively sets the correct version.json for the target branch before you tag and release. No manual set-version or prepare-release required at run time.
+
+    publish_new.yml now relies purely on NBGV’s computed version and uses standard dotnet pack/dotnet nuget push.
+
+If you want the hotfix policy to be different (e.g., allow stable directly from hotfix/*), say the word and I’ll tweak the guard and baseline logic.
+You said:
+Develop branch should have the "-alpha" in the version
+ChatGPT said:
+
+Got it—let’s lock it in so develop always carries -alpha.
+
+You’ve got two layers: a policy in version.json and enforcement in the create_new_release.yml. I’d do both so the workflow is self-healing.
+1) Version policy (optional but recommended)
+
+Update your version.json to add branch policies so non-main gets -alpha and main stays clean:
+
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/Nerdbank.GitVersioning/main/src/NerdBank.GitVersioning/version.schema.json",
+  "version": "1.0",
+  "publicReleaseRefSpec": [
+    "^refs/heads/main$",
+    "^refs/heads/v\\d+\\.\\d+$"
+  ],
+  "release": {
+    "branchName": "v{version}",
+    "versionIncrement": "minor",
+    "firstUnstableTag": "alpha",
+    "branchPolicies": {
+      "main":   { "prerelease": "" },
+      "develop":{ "prerelease": "-alpha" },
+      "*":      { "prerelease": "-alpha" }
+    }
+  }
+}
+
+    main → stable (no suffix)
+
+    develop (and everything else by default) → -alpha
+
+2) CI enforcement (definitive)
+
+Add this step to create_new_release.yml, right after the first dotnet/nbgv step and before guards/tagging. It sets the baseline if develop isn’t already prerelease:
+
+- name: Ensure develop has alpha baseline (auto)
+  if: ${{ inputs.target_branch == 'develop' }}
+  env:
+    SIMPLE: ${{ steps.nbgv.outputs.SimpleVersion }}
+    PRE: ${{ steps.nbgv.outputs.PrereleaseVersion }}
+  run: |
+    set -euo pipefail
+    if [[ -z "${PRE}" ]]; then
+      # bump to next minor -alpha, e.g. 1.0.x -> 1.1-alpha
+      IFS='.' read -r MAJOR MINOR PATCH <<< "${SIMPLE}"
+      NEW="${MAJOR}.$((MINOR+1))-alpha"
+      echo "Setting develop baseline → ${NEW}"
+      nbgv set-version "${NEW}"
+
+      git config user.name "${{ github.actor }}"
+      git config user.email "${{ github.actor }}@users.noreply.github.com"
+      git add version.json
+      git commit -m "chore(nbgv): set develop baseline to ${NEW}"
+      git push origin HEAD:${{ inputs.target_branch }}
+    else
+      echo "develop already prerelease (${PRE}); nothing to do."
+    fi
+
+Then refresh NBGV outputs so subsequent steps use the updated values:
+
+- name: Nerdbank.GitVersioning (refresh)
+  id: nbgv2
+  uses: dotnet/nbgv@v0.4.2
+  with:
+    toolVersion: 3.8.38-alpha
+
+…and switch later references from steps.nbgv.outputs.* to:
+
+${{ steps.nbgv2.outputs.PrereleaseVersion || steps.nbgv.outputs.PrereleaseVersion }}
+${{ steps.nbgv2.outputs.NuGetPackageVersion || steps.nbgv.outputs.NuGetPackageVersion }}
+
+3) (Optional) Hotfix policy
+
+    Want hotfixes to be alpha while testing? Add a similar step for startsWith(inputs.target_branch, 'hotfix/') that bumps patch to -alpha.
+
+    If you sometimes ship stable directly from hotfix, relax your guard (don’t block stable on hotfix/*).
+
+4) Quick confidence check
+
+Add a tiny print just before the guard:
+
+- name: Print computed version
+  run: |
+    echo "NuGetPackageVersion = ${{ steps.nbgv2.outputs.NuGetPackageVersion || steps.nbgv.outputs.NuGetPackageVersion }}"
+    echo "PrereleaseVersion   = ${{ steps.nbgv2.outputs.PrereleaseVersion || steps.nbgv.outputs.PrereleaseVersion }}"
+
+With that, running Create Release on develop will automatically set (or keep) a -alpha baseline and proceed to tag vX.Y.Z-alpha and create a prerelease. If you want me to splice these lines into your exact create_new_release.yml, say the word and I’ll paste the full file.
+You said:
+main will always be a stable release
+ChatGPT said:
+
+Perfect—we’ll lock the policy so main is always stable and the workflow self-heals if it ever drifts.
+
+Here’s exactly what to change.
+1) version.json (policy)
+
+Make main clean (no suffix) and everything else -alpha:
+
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/Nerdbank.GitVersioning/main/src/NerdBank.GitVersioning/version.schema.json",
+  "version": "1.0",
+  "publicReleaseRefSpec": [
+    "^refs/heads/main$",
+    "^refs/heads/v\\d+\\.\\d+$"
+  ],
+  "release": {
+    "branchName": "v{version}",
+    "versionIncrement": "minor",
+    "firstUnstableTag": "alpha",
+    "branchPolicies": {
+      "main": { "prerelease": "" },
+      "*":   { "prerelease": "-alpha" }
+    }
+  }
+}
+
+    Result: main → stable; develop, hotfix/*, etc. → -alpha by default.
+
+2) create_new_release.yml (enforcement)
+
+Add/keep the auto-baseline step so the action corrects branches before tagging.
+
+Place this after the first dotnet/nbgv step and before guards/tagging:
+
+- name: Ensure expected baseline for branch (auto)
+  id: baseline
+  env:
+    BR: ${{ inputs.target_branch }}
+    SIMPLE: ${{ steps.nbgv.outputs.SimpleVersion }}
+    PRE: ${{ steps.nbgv.outputs.PrereleaseVersion }}
+  run: |
+    set -euo pipefail
+    changed=0
+
+    commit_push() {
+      git config user.name "${{ github.actor }}"
+      git config user.email "${{ github.actor }}@users.noreply.github.com"
+      git add version.json
+      git commit -m "chore(nbgv): set baseline to $1"
+      git push origin HEAD:${{ inputs.target_branch }}
+    }
+
+    if [[ "$BR" == "main" ]]; then
+      # main must be stable – if prerelease, strip suffix to SimpleVersion
+      if [[ -n "$PRE" ]]; then
+        NEW="$SIMPLE"
+        echo "Stabilizing main → $NEW"
+        nbgv set-version "$NEW"
+        commit_push "$NEW"; changed=1
+      fi
+    elif [[ "$BR" == "develop" ]]; then
+      # develop must be prerelease – if stable, bump to next minor -alpha
+      if [[ -z "$PRE" ]]; then
+        IFS='.' read -r MAJOR MINOR PATCH <<< "$SIMPLE"
+        NEW="${MAJOR}.$((MINOR+1))-alpha"
+        echo "Setting develop → $NEW"
+        nbgv set-version "$NEW"
+        commit_push "$NEW"; changed=1
+      fi
+    elif [[ "$BR" =~ ^hotfix/ ]]; then
+      # hotfix prerelease by default – if stable, bump to next patch -alpha
+      if [[ -z "$PRE" ]]; then
+        IFS='.' read -r MAJOR MINOR PATCH <<< "$SIMPLE"
+        NEW="${MAJOR}.${MINOR}.$((PATCH+1))-alpha"
+        echo "Setting hotfix → $NEW"
+        nbgv set-version "$NEW"
+        commit_push "$NEW"; changed=1
+      fi
+    fi
+
+    echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+Then refresh NBGV outputs if we changed the baseline:
+
+- name: Nerdbank.GitVersioning (refresh)
+  if: ${{ steps.baseline.outputs.changed == '1' }}
+  id: nbgv2
+  uses: dotnet/nbgv@v0.4.2
+  with:
+    toolVersion: 3.8.38-alpha
+
+Use the refreshed values everywhere that follows (guards, tag, release):
+
+# example references:
+${{ steps.nbgv2.outputs.PrereleaseVersion || steps.nbgv.outputs.PrereleaseVersion }}
+${{ steps.nbgv2.outputs.NuGetPackageVersion || steps.nbgv.outputs.NuGetPackageVersion }}
+
+Keep the guard rails (now they’ll always pass when policy is met):
+
+    Block prerelease on main
+
+    Block stable on develop/hotfix/*
+
+3) publish_new.yml (pack/publish)
+
+You’re good here—just let NBGV supply the version and set -p:PublicRelease=true only for stable releases (which, per your policy, will be main or servicing vX.Y).
+4) Quick runbook
+
+    Alpha (pre): Run Create Release from develop. The workflow ensures -alpha baseline, tags vX.Y.Z-alpha, creates a prerelease.
+
+    Stable: Run Create Release from main (or vX.Y). The workflow stabilizes (if needed), tags vX.Y.Z, marks as latest.
+
+    Hotfix: Branch hotfix/foo off vX.Y. Create Release there → it sets patch -alpha. Merge to vX.Y and run stable release from vX.Y when ready.
+
+If you want, I can paste your full create_new_release.yml with these exact edits applied so you can drop it in verbatim.
+You said:
+what branch policies need to change?
+ChatGPT said:
+
+Short answer: none in version.json. NBGV doesn’t have a branchPolicies section in its schema, and it doesn’t drive prerelease behavior by branch name. The only “policy-like” fields under release are tagName, branchName, versionIncrement, and firstUnstableTag. There’s no built-in per-branch map (e.g., “develop => -alpha”) in the config.
+dotnet.github.io
+
+What to use instead (given your goals “main = stable”, “develop = -alpha”, servicing vX.Y = stable, hotfix usually -alpha):
+
+    Keep publicReleaseRefSpec for main and vX.Y so official builds drop the git hash suffix. That’s the one place refs/branches matter in config.
+    dotnet.github.io
+
+    Drive the prerelease/stable state by the baseline in version.json on each branch (e.g., commit 1.2-alpha on develop, 1.2 on main). You can automate this with your workflow (the auto-baseline step we added: develop → next minor -alpha; hotfix/* → next patch -alpha; main/vX.Y → strip suffix). NBGV’s release.firstUnstableTag + prepare-release also helps bump branches, but it still edits the single version value rather than applying branch rules.
+    GitHub
+
+    Optionally set release.tagName/branchName to match your naming (you already use v{version}), and keep versionIncrement: "minor" if that fits how you bump after a stable ship.
+    dotnet.github.io
+
+So, to your “what needs to change?”:
+
+    Do not add a branchPolicies block (it isn’t part of NBGV).
+    dotnet.github.io
+
+    Do enforce branch intent in CI (your create_new_release.yml auto-baseline step) and keep publicReleaseRefSpec for main and vX.Y. That achieves “main always stable” and “develop always -alpha” reliably.
+
+You said:
+I'd rather have branch policies in version.json
+ChatGPT said:
+
+I get why you’d want that, but Nerdbank.GitVersioning doesn’t support branch-specific policies in version.json. There’s no branchPolicies node in the schema, and the design goal is “no dependency on branch names”—versions are computed from the baseline in the file plus git height, not from which branch you’re on.
+GitHub
+GitHub
+
+Here’s how to get the behavior you want with NBGV:
+
+    Commit the right baseline per branch
+
+        main ⇒ stable baseline like 1.2
+
+        develop ⇒ prerelease baseline like 1.3-alpha
+
+        hotfix/* ⇒ prerelease baseline like 1.2.1-alpha
+        Switch baselines via nbgv set-version or nbgv prepare-release when you cut releases.
+        GitHub
+
+    Keep publicReleaseRefSpec for main and vX.Y so official builds hide the +g<commit> metadata. (This is the only branch/tag awareness in config.)
+    GitHub
+
+    Enforce in CI (what we added):
+    The auto-baseline step in your create_new_release.yml corrects the branch if it drifts—e.g., if develop is stable, it bumps to next minor -alpha; if main has -alpha, it stabilizes to SimpleVersion.
+
+If you truly need config-driven per-branch rules in the file itself, that’s a feature of GitVersion (different tool) via GitVersion.yml, not NBGV. But if you’re staying on NBGV, the baseline-per-branch + CI enforcement you have now is the canonical approach.
+You said:
+I want t github action to use the nbgv cli to set the version 
+ChatGPT said:
+
+Totally doable. Let’s add a reusable workflow that uses the nbgv CLI to set the version on a branch, then have your Create Release flow call it before tagging.
+
+Below you’ll get:
+
+    A drop-in .github/workflows/nbgv_set_version.yml (reusable)
+
+    How to call it for develop → next minor -alpha
+
+    How to call it for hotfix/ → next patch -alpha*
+
+    How to call it for main/vX.Y → stable
+
+1) Reusable workflow: nbgv_set_version.yml
+
+Put this in your shared-workflows repo (or the current repo if you prefer):
+
 name: NBGV Set Version (CLI)
 
 on:
@@ -179,3 +3720,182 @@ jobs:
           echo "pre=$(jq -r .PrereleaseVersion new.json)" >> $GITHUB_OUTPUT
           echo "nuget=$(jq -r .NuGetPackageVersion new.json)" >> $GITHUB_OUTPUT
           echo "New: $(cat new.json)"
+
+This workflow sets the version using the nbgv CLI, commits the change to version.json, and exposes the new NBGV outputs to the caller.
+2) Call it for develop (next minor -alpha)
+
+In your Create Release chain, add this job step before tagging:
+
+jobs:
+  prepare-release:
+    uses: Stillpoint-Software/shared-workflows/.github/workflows/nbgv_set_version.yml@main
+    with:
+      target_branch: develop
+      mode: auto    # ensures -alpha; bumps to next minor if needed
+    secrets:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+3) Call it for hotfix/* (next patch -alpha)
+
+jobs:
+  prepare-hotfix:
+    uses: Stillpoint-Software/shared-workflows/.github/workflows/nbgv_set_version.yml@main
+    with:
+      target_branch: hotfix/urgent-123
+      mode: auto    # ensures -alpha; bumps patch if needed
+    secrets:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+4) Call it for main or vX.Y (stable)
+
+jobs:
+  prepare-stable:
+    uses: Stillpoint-Software/shared-workflows/.github/workflows/nbgv_set_version.yml@main
+    with:
+      target_branch: main
+      mode: auto    # strips prerelease; stabilizes to SimpleVersion
+    secrets:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    If you want to force exact numbers instead of auto, use mode: explicit:
+
+    with:
+      target_branch: develop
+      mode: explicit
+      version: 1.3-alpha
+
+Or if you prefer a generic bump:
+
+with:
+  target_branch: develop
+  mode: bump
+  increment: minor
+  prerelease: alpha
+
+How this plugs into your existing flow
+
+    In Create_release.yml, first call nbgv_set_version.yml with the right target_branch and mode (usually auto).
+
+    Then call your current create_new_release.yml to tag with nbgv tag and create the GitHub Release.
+
+    Finally run publish.yml, which packs/pushes using the version NBGV stamped.
+
+This ensures the baseline is correct before tagging, and everything stays aligned: branch → version baseline → tag → package.
+
+Want me to splice the nbgv_set_version.yml call into your existing Create_release.yml + create_new_release.yml and show the final end-to-end?
+You said:
+yes please
+ChatGPT said:
+
+Awesome — here’s the clean, end-to-end wiring with a dedicated nbgv set-version reusable workflow plugged before your existing tag/release + publish steps.
+
+I’m giving you 4 files:
+
+    NEW (shared) .github/workflows/nbgv_set_version.yml
+
+    UPDATED (project) .github/workflows/Create_release.yml (calls set-version, then create release)
+
+    UPDATED (shared) .github/workflows/create_new_release.yml (minor tweaks + safer tag var handling)
+
+    UPDATED (shared) .github/workflows/publish_new.yml (pack/push via NBGV; no stray version-suffix)
+
+1) NEW — shared-workflows/.github/workflows/nbgv_set_version.yml
+
+Uses the nbgv CLI to set the branch baseline, commit, and push.
+
+name: NBGV Set Version (CLI)
+
+on:
+  workflow_call:
+    inputs:
+      target_branch:
+        description: 'Branch to update (e.g., develop, main, hotfix/foo, v1.2)'
+        type: string
+        required: true
+      mode:
+        description: |
+          How to set the version:
+          - explicit: set to a specific value (e.g., 1.3-alpha)
+          - bump: bump major/minor/patch from current SimpleVersion and apply optional prerelease
+          - auto: policy-based (develop -> next minor -alpha; hotfix/* -> next patch -alpha; main/vX.Y -> stable)
+        type: string
+        required: true
+        default: auto
+      version:
+        description: 'Required when mode=explicit (e.g., 1.3-alpha, 1.2.3, 1.4.0-rc)'
+        type: string
+        required: false
+      increment:
+        description: 'When mode=bump: major | minor | patch'
+        type: string
+        required: false
+        default: minor
+      prerelease:
+        description: 'When mode=bump: prerelease suffix without leading dash (e.g., alpha, beta, rc). Empty for stable.'
+        type: string
+        required: false
+        default: ""
+      commit_message:
+        description: 'Optional custom commit message'
+        type: string
+        required: false
+        default: "chore(nbgv): set version via CI"
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  set-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Install nbgv
+        run: dotnet tool update -g nbgv --version 3.8.38-alpha || dotnet tool install -g nbgv --version 3.8.38-alpha
+
+      - name: Read current version
+        id: cur
+        run: |
+          nbgv get-version --format json > cur.json
+          echo "simple=$(jq -r .SimpleVersion cur.json)" >> $GITHUB_OUTPUT
+          echo "pre=$(jq -r .PrereleaseVersion cur.json)" >> $GITHUB_OUTPUT
+          echo "nuget=$(jq -r .NuGetPackageVersion cur.json)" >> $GITHUB_OUTPUT
+          echo "Current: $(cat cur.json)"
+
+      - name: Decide new version
+        id: plan
+        env:
+          MODE: ${{ inputs.mode }}
+          SIMPLE: ${{ steps.cur.outputs.simple }}
+          PRE: ${{ steps.cur.outputs.pre }}
+          INCR: ${{ inputs.increment }}
+          PRENAME: ${{ inputs.prerelease }}
+          EXPLICIT: ${{ inputs.version }}
+          BR: ${{ inputs.target_branch }}
+        run: |
+          set -euo pipefail
+          parse_semver() { IFS='.' read -r MAJOR MINOR PATCH <<< "$1"; PATCH=${PATCH:-0}; }
+          NEW=""
+          case "$MODE" in
+            explicit)
+              [[ -n "$EXPLICIT" ]] || { echo "version is required for mode=explicit"; exit 1; }
+              NEW="$EXPLICIT"
+              ;;
+            bump)
+              parse_semver "$SIMPLE"
+              case "$INCR" in
+                major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+                minor) MINOR=$((MINOR+1));
+
+
+ChatGPT can make mistakes. Check important info.
+ChatGPT is still generating a response...
