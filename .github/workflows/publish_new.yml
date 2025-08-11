@@ -20,7 +20,6 @@ env:
 jobs:
   build-publish:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,10 +29,11 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Optional: Inspect NBGV version
-        run: |
-          dotnet tool update -g nbgv --version 3.8.38-alpha || true
-          nbgv get-version -p . || true
+      - name: Nerdbank.GitVersioning (outputs)
+        id: nbgv
+        uses: dotnet/nbgv@v0.4.2
+        with:
+          toolVersion: 3.8.38-alpha
 
       - name: Restore
         run: dotnet restore "${{ env.SOLUTION_NAME }}"
@@ -47,7 +47,8 @@ jobs:
       - name: Decide PublicRelease (stable only)
         id: rel
         run: |
-          if [[ "${{ github.event_name }}" == "release" && "${{ github.event.release.prerelease }}" == "false" ]]; then
+          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          if [[ -z "$PRE" ]]; then
             echo "flag=-p:PublicRelease=true" >> $GITHUB_OUTPUT
           else
             echo "flag=" >> $GITHUB_OUTPUT
