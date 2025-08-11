@@ -35,7 +35,7 @@ jobs:
       - name: Checkout target branch (full history for NBGV)
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 100
           ref: ${{ inputs.target_branch }}
 
       - name: Debug version.json files
