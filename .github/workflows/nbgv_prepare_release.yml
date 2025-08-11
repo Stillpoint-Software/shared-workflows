@@ -4,124 +4,88 @@ on:
   workflow_call:
     inputs:
       target_branch:
-        description: "Branch or tag to release from"
+        description: 'Branch to release from (e.g., main, develop, hotfix/xyz, v1.2)'
         type: string
         required: true
-        default: main
-      increment:
-        description: "Version increment (major | minor | patch)"
-        type: string
-        required: true
-        default: patch
-      version_file_path:
-        description: "Path to version.json"
-        type: string
-        required: false
-        default: version.json
-
     secrets:
       GH_TOKEN:
-        description: "GitHub token"
-        required: false
+        required: true
 
-    outputs:
-      tag_name:
-        description: "Git tag from Nerdbank"
-        value: ${{ jobs.prep.outputs.tag }}
-      semver2:
-        description: "SemVer2 string"
-        value: ${{ jobs.prep.outputs.semver }}
-      release_branch:
-        description: "Release branch name"
-        value: ${{ jobs.prep.outputs.release_branch }}
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
 
 jobs:
-  prep:
+  create-release:
     runs-on: ubuntu-latest
-
-    outputs:
-      release_branch: ${{ steps.prep_release.outputs.branch }}
-      tag:            ${{ steps.version.outputs.tag }}
-      semver:         ${{ steps.version.outputs.semver }}
-
     steps:
-      - name: 📥 Checkout target
+      - name: Verify target branch via API
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          BR="${{ inputs.target_branch }}"
+          URL="https://api.github.com/repos/${{ github.repository }}/branches/${BR}"
+          code=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" "$URL")
+          [[ "$code" == "200" ]] || { echo "❌ Branch not found on origin: $BR"; exit 1; }
+
+      - name: Checkout target branch (full history for NBGV)
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.target_branch }}
           fetch-depth: 0
-          token: ${{ secrets.GH_TOKEN || github.token }}
+          ref: ${{ inputs.target_branch }}
+          token: ${{ secrets.GH_TOKEN }}
 
-      - name: ⚙️ Setup .NET 9.x
-        uses: actions/setup-dotnet@v4
+      - name: Nerdbank.GitVersioning (install + outputs)
+        id: nbgv
+        uses: dotnet/nbgv@v0.4.2
         with:
-          dotnet-version: 9.0.x
+          toolVersion: 3.8.38-alpha
 
-      - name: 📋 Configure Git identity
+      # Guard rails (policy)
+      - name: Guard - block prerelease from main; block stable from develop/hotfix/*
         run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Install Nerdbank.GitVersioning tool (3.8.38-alpha)
-        run: dotnet tool update -g nbgv --version 3.8.38-alpha || dotnet tool install -g nbgv --version 3.8.38-alpha
-      
-      - name: 🔖 Resolve SemVer
-        id: version
-        run: |
-          export PATH="$PATH:$HOME/.dotnet/tools"
-          semver=$(nbgv get-version --variable SemVer2)
-          echo "semver=$semver" >> $GITHUB_OUTPUT
-          
-      - name: 🏷️  Bootstrap first tag when repo is tag-less
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          if ! git tag --list | grep -q . ; then
-            version=$(jq -r .version version.json)
-            echo "No tags found – creating bootstrap tag $version on HEAD"
-            git config user.name "github-actions"
-            git config user.email "github-actions@github.com"
-            git tag "$version" HEAD
-            git push https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git "$version"
-          else
-            echo "Tag(s) already exist – skipping bootstrap tag"
+          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          BR="${{ inputs.target_branch }}"
+          if [[ -n "$PRE" && "$BR" == "main" ]]; then
+            echo "❌ Computed PRERELEASE on 'main'. Cut prereleases from develop or hotfix/*."
+            exit 1
+          fi
+          if [[ -z "$PRE" && ( "$BR" == "develop" || "$BR" =~ ^hotfix/ ) ]]; then
+            echo "❌ Computed STABLE on '$BR'. Stable releases should come from main or vX.Y."
+            exit 1
           fi
 
-      - name: 🛠️ Prepare release
-        id: prep_release
+      - name: Compute tag/prerelease flags
+        id: vars
         run: |
-          set -euo pipefail
+          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          TAG="v${{ steps.nbgv.outputs.NuGetPackageVersion }}"
+          echo "pre=$PRE"  >> $GITHUB_OUTPUT
+          echo "tag=$TAG"  >> $GITHUB_OUTPUT
+          echo "Using TAG=$TAG PRE='${PRE}'"
 
-          # Let Nerdbank.GitVersioning do the right thing for both flows:
-          #  • On main/master/hotfix/* → patch bump, no "-alpha"  (stable)
-          #  • On develop (or any other ref) → patch bump + "-alpha"
-          nbgv prepare-release
+      - name: Tag current commit with NBGV
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          nbgv tag || echo "Tag may already exist locally."
+          git push origin "${{ steps.vars.outputs.tag }}" || echo "Tag already exists on remote."
 
-          # Push the branch & tags so the Pack workflow can see them
-          BR=$(git rev-parse --abbrev-ref HEAD)
-          git push --set-upstream origin "$BR"
-          git push origin --tags
-
-          # Expose the branch name for downstream workflows
-          echo "branch=$BR" >> "$GITHUB_OUTPUT"
-
-      - name: 📝 Generate release notes
-        id: changelog
-        uses: mikepenz/release-changelog-builder-action@v5
+      - name: Create GitHub Release
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
-
-      - name: 💾 Save notes to file
-        if: always()
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
-          CONTENT="${{ steps.changelog.outputs.changelog || '# Initial release' }}"
-          echo "$CONTENT" > release-notes.md
-          ls -l release-notes.md
-
-      - name: 📦 Upload release notes artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: release_notes
-          path: release-notes.md
+          TAG="${{ steps.vars.outputs.tag }}"
+          PRE="${{ steps.vars.outputs.pre }}"
+          BR="${{ inputs.target_branch }}"
+          FLAGS=()
+          [[ -n "$PRE" ]] && FLAGS+=(--prerelease)
+          if [[ -z "$PRE" && ( "$BR" == "main" || "$BR" =~ ^v[0-9]+\.[0-9]+$ ) ]]; then
+            FLAGS+=(--latest)
+          fi
+          echo "Creating release ${TAG} from '${BR}'"
+          gh release create "${TAG}" --title "${TAG}" --generate-notes "${FLAGS[@]}"
