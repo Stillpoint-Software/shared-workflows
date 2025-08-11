@@ -20,15 +20,17 @@ jobs:
   create-release:
     runs-on: ubuntu-latest
     steps:
-      - name: Verify target branch exists on origin
+      - name: Verify target branch via API
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
-          set -e
-          REPO_URL="https://github.com/${{ github.repository }}.git"
+          set -euo pipefail
           BR="${{ inputs.target_branch }}"
-          if ! git ls-remote --exit-code --heads "$REPO_URL" "$BR" >/dev/null; then
-            echo "❌ Branch not found on origin: $BR"
-            exit 1
-          fi
+          URL="https://api.github.com/repos/${{ github.repository }}/branches/${BR}"
+          code=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" "$URL")
+          [[ "$code" == "200" ]] || { echo "❌ Branch not found on origin: $BR"; exit 1; }
 
       - name: Checkout target branch (full history for NBGV)
         uses: actions/checkout@v4
