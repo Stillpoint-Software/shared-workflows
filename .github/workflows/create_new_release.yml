@@ -3,6 +3,10 @@ name: Create Release
 on:
   workflow_call:
     inputs:
+      target_branch:
+        description: 'Branch to release from (e.g., main, develop, hotfix/xyz, v1.2)'
+        type: string
+        required: true
       is_prerelease:
         type: boolean
         required: true
@@ -20,40 +24,53 @@ permissions:
   pull-requests: write
   packages: write
 
-env:
-  ALLOW_PRERELEASE: ${{ startsWith(github.ref, 'refs/heads/develop') || startsWith(github.ref, 'refs/heads/hotfix/') }}
-
 jobs:
   create-release:
     runs-on: ubuntu-latest
     steps:
-      - name: Validate prerelease usage
-        if: ${{ ( env.ALLOW_PRERELEASE == 'true' && inputs.is_prerelease == false ) || ( github.ref == 'refs/heads/main' && inputs.is_prerelease == true ) }}
+      # Fail if trying to cut a prerelease from main
+      - name: Guard no prerelease from main
+        if: ${{ inputs.is_prerelease && inputs.target_branch == 'main' }}
         run: |
-          echo "Prereleases should not be triggered on main; use develop or hotfix/*."
+          echo "❌ Prereleases must not be cut from main. Use develop or hotfix/*."
           exit 1
 
-      - name: Checkout (full history for NBGV)
+      # Fail if trying to cut a stable from develop or hotfix/*
+      - name: Guard stable not from develop/hotfix
+        if: ${{ !inputs.is_prerelease && (startsWith(inputs.target_branch, 'develop') || startsWith(inputs.target_branch, 'hotfix/')) }}
+        run: |
+          echo "❌ Stable releases should come from main or vX.Y servicing branches, not develop/hotfix/*."
+          exit 1
+
+      - name: Verify target branch exists on origin
+        run: |
+          if ! git ls-remote --exit-code --heads origin "${{ inputs.target_branch }}" >/dev/null; then
+            echo "❌ Branch not found on origin: ${{ inputs.target_branch }}"
+            exit 1
+          fi
+
+      - name: Checkout target branch (full history for NBGV)
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0    # required by nbgv
+          fetch-depth: 0
+          ref: ${{ inputs.target_branch }}
 
       - name: Nerdbank.GitVersioning (install + outputs)
         id: nbgv
         uses: dotnet/nbgv@v0.4.2
         with:
-          toolVersion: 3.8.38-alpha   # pin to your current CLI
-          setAllVars: false           # optional: true to export NBGV_* env vars
+          toolVersion: 3.8.38-alpha   # keep behavior pinned
+          setAllVars: false
 
-      - name: Sanity-check release type vs computed version
+      - name: Sanity-check - requested prerelease vs computed version
         run: |
           PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
           if [[ "${{ inputs.is_prerelease }}" == "true" && -z "$PRE" ]]; then
-            echo "Requested prerelease but NBGV computed a stable version."
+            echo "❌ Requested prerelease, but NBGV computed a STABLE version."
             exit 1
           fi
           if [[ "${{ inputs.is_prerelease }}" == "false" && -n "$PRE" ]]; then
-            echo "Requested stable release but NBGV computed a prerelease ($PRE)."
+            echo "❌ Requested STABLE, but NBGV computed a PRERELEASE ($PRE)."
             exit 1
           fi
 
@@ -61,8 +78,9 @@ jobs:
         run: |
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
-          nbgv tag || echo "Tag may already exist."
-          git push origin "v${{ steps.nbgv.outputs.NuGetPackageVersion }}" || echo "Tag exists on remote."
+          # Creates annotated tag v{NuGetPackageVersion} at HEAD
+          nbgv tag || echo "Tag may already exist locally."
+          git push origin "v${{ steps.nbgv.outputs.NuGetPackageVersion }}" || echo "Tag already exists on remote."
 
       - name: Create GitHub Release
         env:
@@ -71,9 +89,14 @@ jobs:
           FLAGS=()
           [[ "${{ inputs.is_draft }}" == "true"      ]] && FLAGS+=(--draft)
           [[ "${{ inputs.is_prerelease }}" == "true" ]] && FLAGS+=(--prerelease)
-          if [[ "${{ github.ref }}" == "refs/heads/main" && "${{ inputs.is_prerelease }}" != "true" ]]; then
-            FLAGS+=(--latest)
+
+          # Mark latest for stable releases from main or servicing branches vX.Y
+          if [[ "${{ inputs.target_branch }}" == "main" || "${{ inputs.target_branch }}" =~ ^v[0-9]+\.[0-9]+$ ]]; then
+            if [[ "${{ inputs.is_prerelease }}" != "true" ]]; then
+              FLAGS+=(--latest)
+            fi
           fi
+
           TAG="v${{ steps.nbgv.outputs.NuGetPackageVersion }}"
-          echo "Creating release ${TAG}"
+          echo "Creating release ${TAG} from '${{ inputs.target_branch }}'"
           gh release create "${TAG}" --title "${TAG}" --generate-notes "${FLAGS[@]}"
