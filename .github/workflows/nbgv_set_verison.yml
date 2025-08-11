@@ -1,4 +1,4 @@
-name: NBGV Set Version (CLI)
+name: NBGV Set Version
 
 on:
   workflow_call:
