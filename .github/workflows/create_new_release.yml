@@ -1,15 +1,13 @@
-name: Old Create Release
+name: Create Release
 
 on:
   workflow_call:
     inputs:
       is_prerelease:
-        description: 'Create a prerelease:'
         type: boolean
         required: true
         default: false
       is_draft:
-        description: 'Set as a draft:'
         type: boolean
         required: true
         default: false
@@ -28,58 +26,54 @@ env:
 jobs:
   create-release:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Check For Valid Prerelease
-      if: ${{ ( env.ALLOW_PRERELEASE == 'true' && inputs.is_prerelease == 'false' ) || ( github.ref == 'refs/heads/main' && inputs.is_prerelease == 'true' ) }}
-      run: |
-        echo "Prereleases should not be triggered on the main branch, please use development or hotfix"
-        exit 1
+      - name: Validate prerelease usage
+        if: ${{ ( env.ALLOW_PRERELEASE == 'true' && inputs.is_prerelease == false ) || ( github.ref == 'refs/heads/main' && inputs.is_prerelease == true ) }}
+        run: |
+          echo "Prereleases should not be triggered on main; use develop or hotfix/*."
+          exit 1
 
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout (full history for NBGV)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # required by nbgv
 
-    - name: Ensure Nerdbank.GitVersioning tool is installed
-      run: |
-        if ! dotnet tool list -g | grep -q nbgv; then
-          dotnet tool install --global nbgv
-        else
-          dotnet tool update --global nbgv
-        fi
+      - name: Nerdbank.GitVersioning (install + outputs)
+        id: nbgv
+        uses: dotnet/nbgv@v0.4.2
+        with:
+          toolVersion: 3.8.38-alpha   # pin to your current CLI
+          setAllVars: false           # optional: true to export NBGV_* env vars
 
-    - name: Get version from Nerdbank.GitVersioning
-      id: nbgv
-      run: |
-        nbgv get-version --format json > nbgv.json
-        version=$(jq -r .NuGetPackageVersion nbgv.json)
-        echo "version_tag=$version" >> $GITHUB_ENV
+      - name: Sanity-check release type vs computed version
+        run: |
+          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          if [[ "${{ inputs.is_prerelease }}" == "true" && -z "$PRE" ]]; then
+            echo "Requested prerelease but NBGV computed a stable version."
+            exit 1
+          fi
+          if [[ "${{ inputs.is_prerelease }}" == "false" && -n "$PRE" ]]; then
+            echo "Requested stable release but NBGV computed a prerelease ($PRE)."
+            exit 1
+          fi
 
-    - name: Commit and Push Version Change
-      run: |
-        # Update version.json with the new version_tag
-        jq --arg ver "${{ env.version_tag }}" '.version = $ver' version.json > tmp_version.json && mv tmp_version.json version.json
-        
-        git config --global user.name '${{ github.triggering_actor }}'
-        git config --global user.email '${{ github.triggering_actor }}@users.noreply.github.com'
-        git add version.json
-        if git diff --cached --quiet; then
-          echo "No version change to commit."
-        else
-          git commit -m "Update version to ${{ env.version_tag }} for release."
-          git push
-        fi
+      - name: Tag current commit with NBGV
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          nbgv tag || echo "Tag may already exist."
+          git push origin "v${{ steps.nbgv.outputs.NuGetPackageVersion }}" || echo "Tag exists on remote."
 
-    - name: Create Release
-      run: |
-        echo "Creating release ${{ env.version_tag }}"
-        gh release create ${{ env.version_tag }} \
-          --target ${{ github.ref_name }} \
-          --title ${{ env.version_tag }} \
-          --generate-notes \
-          $(if [[ "${{ inputs.is_draft }}" == "true" ]]; then echo "--draft"; fi) \
-          $(if [[ "${{ inputs.is_prerelease }}" == "true" ]]; then echo "--prerelease"; fi) \
-          $(if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then echo "--latest"; fi)
-      env:
-        GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          FLAGS=()
+          [[ "${{ inputs.is_draft }}" == "true"      ]] && FLAGS+=(--draft)
+          [[ "${{ inputs.is_prerelease }}" == "true" ]] && FLAGS+=(--prerelease)
+          if [[ "${{ github.ref }}" == "refs/heads/main" && "${{ inputs.is_prerelease }}" != "true" ]]; then
+            FLAGS+=(--latest)
+          fi
+          TAG="v${{ steps.nbgv.outputs.NuGetPackageVersion }}"
+          echo "Creating release ${TAG}"
+          gh release create "${TAG}" --title "${TAG}" --generate-notes "${FLAGS[@]}"
