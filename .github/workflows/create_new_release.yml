@@ -38,6 +38,16 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.target_branch }}
 
+      - name: Debug version.json files
+        run: |
+          echo "PWD=$(pwd)"
+          echo "Listing all version.json files tracked by git:"
+          git ls-files | grep -E '(^|/)(version\.json)$' || true
+          echo "Root version.json (if present):"
+          [ -f version.json ] && sed -n '1,200p' version.json || echo "no root version.json"
+          echo "Search for empty version fields:"
+          git grep -n '"version"\s*:\s*""' || true
+          
       - name: Nerdbank.GitVersioning (install + outputs)
         id: nbgv
         uses: dotnet/nbgv@v0.4.2
