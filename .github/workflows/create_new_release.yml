@@ -35,25 +35,17 @@ jobs:
       - name: Checkout target branch (full history for NBGV)
         uses: actions/checkout@v4
         with:
-          fetch-depth: 100
+          fetch-depth: 0
           ref: ${{ inputs.target_branch }}
+          token: ${{ secrets.GH_TOKEN }}
 
-      - name: Debug version.json files
-        run: |
-          echo "PWD=$(pwd)"
-          echo "Listing all version.json files tracked by git:"
-          git ls-files | grep -E '(^|/)(version\.json)$' || true
-          echo "Root version.json (if present):"
-          [ -f version.json ] && sed -n '1,200p' version.json || echo "no root version.json"
-          echo "Search for empty version fields:"
-          git grep -n '"version"\s*:\s*""' || true
-          
       - name: Nerdbank.GitVersioning (install + outputs)
         id: nbgv
         uses: dotnet/nbgv@v0.4.2
         with:
           toolVersion: 3.8.38-alpha
 
+      # Guard rails (policy)
       - name: Guard - block prerelease from main; block stable from develop/hotfix/*
         run: |
           PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
@@ -67,25 +59,33 @@ jobs:
             exit 1
           fi
 
+      - name: Compute tag/prerelease flags
+        id: vars
+        run: |
+          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          TAG="v${{ steps.nbgv.outputs.NuGetPackageVersion }}"
+          echo "pre=$PRE"  >> $GITHUB_OUTPUT
+          echo "tag=$TAG"  >> $GITHUB_OUTPUT
+          echo "Using TAG=$TAG PRE='${PRE}'"
+
       - name: Tag current commit with NBGV
         run: |
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
           nbgv tag || echo "Tag may already exist locally."
-          git push origin "v${{ steps.nbgv.outputs.NuGetPackageVersion }}" || echo "Tag already exists on remote."
+          git push origin "${{ steps.vars.outputs.tag }}" || echo "Tag already exists on remote."
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
-          TAG="v${{ steps.nbgv.outputs.NuGetPackageVersion }}"
-          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          TAG="${{ steps.vars.outputs.tag }}"
+          PRE="${{ steps.vars.outputs.pre }}"
           BR="${{ inputs.target_branch }}"
           FLAGS=()
-          [[ -n "$PRE" ]] || FLAGS+=(--latest)  # latest only for stable
-          # Only mark latest for stable from main or servicing branches vX.Y
-          if [[ -n "$PRE" || ( "$BR" != "main" && ! "$BR" =~ ^v[0-9]+\.[0-9]+$ ) ]]; then
-            FLAGS=("${FLAGS[@]/--latest}")  # strip latest if conditions not met
+          [[ -n "$PRE" ]] && FLAGS+=(--prerelease)
+          if [[ -z "$PRE" && ( "$BR" == "main" || "$BR" =~ ^v[0-9]+\.[0-9]+$ ) ]]; then
+            FLAGS+=(--latest)
           fi
           echo "Creating release ${TAG} from '${BR}'"
           gh release create "${TAG}" --title "${TAG}" --generate-notes "${FLAGS[@]}"
