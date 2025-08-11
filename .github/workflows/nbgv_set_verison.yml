@@ -1,0 +1,181 @@
+name: NBGV Set Version (CLI)
+
+on:
+  workflow_call:
+    inputs:
+      target_branch:
+        description: 'Branch to update (e.g., develop, main, hotfix/foo, v1.2)'
+        type: string
+        required: true
+      mode:
+        description: |
+          How to set the version:
+          - explicit: set to a specific value (e.g., 1.3-alpha)
+          - bump: bump major/minor/patch from current SimpleVersion and apply optional prerelease
+          - auto: policy-based (develop -> next minor -alpha; hotfix/* -> next patch -alpha; main/vX.Y -> stable)
+        type: string
+        required: true
+        default: auto
+      version:
+        description: 'Required when mode=explicit (e.g., 1.3-alpha, 1.2.3, 1.4.0-rc)'
+        type: string
+        required: false
+      increment:
+        description: 'When mode=bump: major | minor | patch'
+        type: string
+        required: false
+        default: minor
+      prerelease:
+        description: 'When mode=bump: prerelease suffix without leading dash (e.g., alpha, beta, rc). Empty for stable.'
+        type: string
+        required: false
+        default: ""
+      commit_message:
+        description: 'Optional custom commit message'
+        type: string
+        required: false
+        default: "chore(nbgv): set version via CI"
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  set-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Install nbgv
+        run: dotnet tool update -g nbgv --version 3.8.38-alpha || dotnet tool install -g nbgv --version 3.8.38-alpha
+
+      - name: Read current version
+        id: cur
+        run: |
+          nbgv get-version --format json > cur.json
+          echo "simple=$(jq -r .SimpleVersion cur.json)" >> $GITHUB_OUTPUT
+          echo "pre=$(jq -r .PrereleaseVersion cur.json)" >> $GITHUB_OUTPUT
+          echo "nuget=$(jq -r .NuGetPackageVersion cur.json)" >> $GITHUB_OUTPUT
+          echo "Current: $(cat cur.json)"
+
+      - name: Decide new version
+        id: plan
+        env:
+          MODE: ${{ inputs.mode }}
+          SIMPLE: ${{ steps.cur.outputs.simple }}
+          PRE: ${{ steps.cur.outputs.pre }}
+          INCR: ${{ inputs.increment }}
+          PRENAME: ${{ inputs.prerelease }}
+          EXPLICIT: ${{ inputs.version }}
+          BR: ${{ inputs.target_branch }}
+        run: |
+          set -euo pipefail
+
+          parse_semver() {
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$1"
+            # If PATCH missing, default 0
+            PATCH=${PATCH:-0}
+          }
+
+          NEW=""
+
+          case "$MODE" in
+            explicit)
+              if [[ -z "$EXPLICIT" ]]; then
+                echo "Version is required when mode=explicit"; exit 1
+              fi
+              NEW="$EXPLICIT"
+              ;;
+
+            bump)
+              parse_semver "$SIMPLE"
+              case "$INCR" in
+                major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+                minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+                patch) PATCH=$((PATCH+1)) ;;
+                *) echo "increment must be major|minor|patch"; exit 1 ;;
+              esac
+
+              if [[ -n "$PRENAME" ]]; then
+                NEW="${MAJOR}.${MINOR}.${PATCH}-${PRENAME}"
+              else
+                NEW="${MAJOR}.${MINOR}.${PATCH}"
+              fi
+              ;;
+
+            auto)
+              # develop -> next minor -alpha
+              # hotfix/* -> next patch -alpha
+              # main or vX.Y -> stable (strip prerelease)
+              parse_semver "$SIMPLE"
+              if [[ "$BR" == "develop" ]]; then
+                if [[ -z "$PRE" ]]; then
+                  MINOR=$((MINOR+1))
+                fi
+                NEW="${MAJOR}.${MINOR}-alpha"
+              elif [[ "$BR" =~ ^hotfix/ ]]; then
+                if [[ -z "$PRE" ]]; then
+                  PATCH=$((PATCH+1))
+                fi
+                NEW="${MAJOR}.${MINOR}.${PATCH}-alpha"
+              elif [[ "$BR" == "main" || "$BR" =~ ^v[0-9]+\.[0-9]+$ ]]; then
+                NEW="${MAJOR}.${MINOR}.${PATCH}"
+              else
+                # default: keep current prerelease if any; if none, apply -alpha bump minor
+                if [[ -z "$PRE" ]]; then
+                  MINOR=$((MINOR+1))
+                  NEW="${MAJOR}.${MINOR}-alpha"
+                else
+                  # e.g., already -alpha; keep same simple but ensure suffix
+                  if [[ "$SIMPLE" =~ ^[0-9]+\.[0-9]+$ ]]; then
+                    NEW="${SIMPLE}-alpha"
+                  else
+                    NEW="${MAJOR}.${MINOR}.${PATCH}-alpha"
+                  fi
+                fi
+              fi
+              ;;
+
+            *)
+              echo "Unsupported mode: $MODE"; exit 1 ;;
+          esac
+
+          echo "new=$NEW" >> $GITHUB_OUTPUT
+          echo "Planned new version: $NEW"
+
+      - name: Apply new version (nbgv set-version)
+        id: apply
+        env:
+          NEW: ${{ steps.plan.outputs.new }}
+          MSG: ${{ inputs.commit_message }}
+        run: |
+          set -euo pipefail
+          nbgv set-version "$NEW"
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git add version.json
+          if git diff --cached --quiet; then
+            echo "No change to version.json (already $NEW)."
+            echo "changed=0" >> $GITHUB_OUTPUT
+          else
+            git commit -m "$MSG: $NEW"
+            git push origin HEAD:${{ inputs.target_branch }}
+            echo "changed=1" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Read new version (outputs for callers)
+        id: new
+        run: |
+          nbgv get-version --format json > new.json
+          echo "simple=$(jq -r .SimpleVersion new.json)" >> $GITHUB_OUTPUT
+          echo "pre=$(jq -r .PrereleaseVersion new.json)" >> $GITHUB_OUTPUT
+          echo "nuget=$(jq -r .NuGetPackageVersion new.json)" >> $GITHUB_OUTPUT
+          echo "New: $(cat new.json)"
