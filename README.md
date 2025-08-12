@@ -141,10 +141,10 @@ jobs:
     uses: Github Organization Name/shared-workflows/.github/workflows/set_version.yml@main
     with:
       target_branch: ${{ github.ref_name }}
-      mode: auto              # or bump/explicit
-      version: ""             # when mode=explicit
-      increment: patch        # when mode=bump
-      prerelease: ""          # e.g., alpha/beta/rc (no leading dash)
+      mode: auto              
+      version: ""             
+      increment: patch        
+      prerelease: ""          
     secrets:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -176,7 +176,7 @@ jobs:
 ---
 
 ### 7. 📦 Pack and Publish
-Restores, builds, tests, then packs with NBGV’s version and pushes to NuGet.  
+Restores, builds, tests, then packs and pushes to NuGet.  
 For **stable** builds, sets `PublicRelease=true`.
 
 **Reusable:** `.github/workflows/pack_and_publish.yml`  
@@ -200,8 +200,8 @@ jobs:
     with:
       trigger: release
       target_branch: ${{ github.event.release.target_commitish }}
-      override_build_configuration: ''  # no manual override on release events
-      prerelease: ${{ github.event.release.prerelease }}  # true/false from the release
+      override_build_configuration: '' 
+      prerelease: ${{ github.event.release.prerelease }}  
 
   publish:
     needs: set-config
@@ -231,7 +231,7 @@ jobs:
     with:
       trigger: workflow_dispatch
       target_branch: ${{ github.ref_name }}
-      override_build_configuration: 'Debug'  # or '', Release
+      override_build_configuration: 'Debug' 
       prerelease: false
 ```
 ---
@@ -243,6 +243,19 @@ jobs:
 
 2) **Versioning: `version.json`**
    - Root `version.json` managed by NBGV (Nerdbank GitVersioning) (baseline rules in your repo).
+  
+  ```json
+  {
+  "$schema": "https://raw.githubusercontent.com/dotnet/Nerdbank.GitVersioning/main/src/NerdBank.GitVersioning/version.schema.json",
+  "version": "1.0.0",
+  "publicReleaseRefSpec": [
+    "^refs/heads/main$",
+    "^refs/heads/hotfix$",
+    "^refs/heads/v\\d+\\.\\d+$"
+  ]
+}
+```
+
 
 3) **MSBuild props (at repo root)**
    - File must be named **`Directory.Build.props`**.
@@ -285,6 +298,5 @@ jobs:
 - Use `${{ secrets.GITHUB_TOKEN }}` as **GH_TOKEN** in consumers.
 - `set_version.yml` **pushes** `version.json`. Ensure branch protections allow workflow pushes (or switch it to open a PR).
 - Tag is always `v<NuGetPackageVersion>`. Releases are created as **draft** by default.
-- For prereleases (develop/hotfix), NBGV baseline is `-alpha`; `main` is **always stable**.
+- For prereleases (develop/hotfix),  **Nerdbank.GitVersioning** baseline is `-alpha`; `main` is **always stable**.
 - NuGet push uses `--skip-duplicate` to keep reruns green.
-
