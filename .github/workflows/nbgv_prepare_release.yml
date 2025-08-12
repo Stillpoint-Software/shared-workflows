@@ -7,6 +7,20 @@ on:
         description: 'Branch to release from (e.g., main, develop, hotfix/xyz, v1.2)'
         type: string
         required: true
+      tag:
+        description: 'Final tag name from nbgv_set_version (v<NuGetPackageVersion>)'
+        type: string
+        required: true
+      prerelease:
+        description: "Prerelease suffix from nbgv_set_version (e.g., '-alpha'), empty for stable"
+        type: string
+        required: false
+        default: ""
+      draft:
+        description: "Create release as draft"
+        type: boolean
+        required: false
+        default: true
     secrets:
       GH_TOKEN:
         required: true
@@ -19,54 +33,29 @@ permissions:
 jobs:
   create-release:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
     steps:
-      - name: Verify target branch via API
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: |
-          set -euo pipefail
-          BR="${{ inputs.target_branch }}"
-          URL="https://api.github.com/repos/${{ github.repository }}/branches/${BR}"
-          code=$(curl -sS -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" "$URL")
-          [[ "$code" == "200" ]] || { echo "❌ Branch not found on origin: $BR"; exit 1; }
-
-      - name: Checkout target branch (full history for NBGV)
+      - name: Checkout target branch (full history for notes/compare)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ inputs.target_branch }}
           token: ${{ secrets.GH_TOKEN }}
 
-      - name: Nerdbank.GitVersioning (install + outputs)
-        id: nbgv
-        uses: dotnet/nbgv@v0.4.2
-        with:
-          toolVersion: 3.8.38-alpha
-
-      # Guard rails (policy)
-      - name: Guard - block prerelease from main; block stable from develop/hotfix/*
-        run: |
-          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
-          BR="${{ inputs.target_branch }}"
-          if [[ -n "$PRE" && "$BR" == "main" ]]; then
-            echo "❌ Computed PRERELEASE on 'main'. Cut prereleases from develop or hotfix/*."
-            exit 1
-          fi
-          if [[ -z "$PRE" && ( "$BR" == "develop" || "$BR" =~ ^hotfix/ ) ]]; then
-            echo "❌ Computed STABLE on '$BR'. Stable releases should come from main or vX.Y."
-            exit 1
-          fi
-
-      - name: Compute tag/prerelease flags
+      - name: Compute flags from inputs
         id: vars
         run: |
-          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
-          TAG="v${{ steps.nbgv.outputs.NuGetPackageVersion }}"
-          echo "pre=$PRE"  >> $GITHUB_OUTPUT
-          echo "tag=$TAG"  >> $GITHUB_OUTPUT
-          echo "Using TAG=$TAG PRE='${PRE}'"
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          PRE="${{ inputs.prerelease }}"
+          DRAFT="${{ inputs.draft }}"
+          FLAGS=()
+          [[ "$DRAFT" == "true" ]] && FLAGS+=(--draft)
+          [[ -n "$PRE"   ]] && FLAGS+=(--prerelease)
+          echo "tag=$TAG"  >> "$GITHUB_OUTPUT"
+          echo "flags=${FLAGS[*]}" >> "$GITHUB_OUTPUT"
+          echo "Using TAG=$TAG, DRAFT=$DRAFT, PRE='${PRE}'"
 
       - name: Build release notes from CHANGELOG.md (if available)
         id: notes
@@ -78,8 +67,7 @@ jobs:
           OUT="RELEASE_NOTES.md"
 
           if [[ -f "$FILE" ]]; then
-            # Extract the section that starts with "## [v]X.Y.Z" (with or without brackets),
-            # and stops at the next "## " header.
+            # Extract section "## vX.Y.Z" or "## [vX.Y.Z]" up to next "## "
             awk -v ver="$VER" '
               BEGIN { found=0 }
               $0 ~ "^##[[:space:]]*\\[?v?" ver "\\]?([[:space:]]|$)" { found=1; print; next }
@@ -88,7 +76,6 @@ jobs:
             ' "$FILE" > "$OUT" || true
           fi
 
-          # If no section found, build a simple log since last tag
           if [[ ! -s "$OUT" ]]; then
             echo "## ${TAG}" > "$OUT"
             prev="$(git tag --sort=-creatordate | grep -v "^${TAG}$" | head -n1 || true)"
@@ -105,36 +92,46 @@ jobs:
             fi
           fi
 
-          # Expose a flag so we know to use --notes-file
           if [[ -s "$OUT" ]]; then
             echo "notes_file=$OUT" >> "$GITHUB_OUTPUT"
           else
             echo "notes_file=" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Tag current commit with NBGV
+      - name: Ensure tag exists
         run: |
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor }}@users.noreply.github.com"
-          nbgv tag || echo "Tag may already exist locally."
-          git push origin "${{ steps.vars.outputs.tag }}" || echo "Tag already exists on remote."
-
-      - name: Create GitHub Release (with CHANGELOG)
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: |
+          set -euo pipefail
           TAG="${{ steps.vars.outputs.tag }}"
-          PRE="${{ steps.vars.outputs.pre }}"
-          BR="${{ inputs.target_branch }}"
-          NOTES="${{ steps.notes.outputs.notes_file }}"
-
-          FLAGS=()
-          FLAGS+=(--draft)                  # ← always create as DRAFT
-          [[ -n "$PRE" ]] && FLAGS+=(--prerelease)
-
-          echo "Creating DRAFT release ${TAG} from '${BR}'"
-          if [[ -n "$NOTES" ]]; then
-            gh release create "${TAG}" --title "${TAG}" --notes-file "$NOTES" "${FLAGS[@]}"
+          git fetch --tags --force
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Tag $TAG already exists (ok)."
           else
-            gh release create "${TAG}" --title "${TAG}" --generate-notes "${FLAGS[@]}"
+            git config user.name "${{ github.actor }}"
+            git config user.email "${{ github.actor }}@users.noreply.github.com"
+            git tag -a "$TAG" -m "$TAG"
+            git push origin "refs/tags/$TAG"
+          fi
+
+      - name: Create or update GitHub Release
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.vars.outputs.tag }}"
+          NOTES="${{ steps.notes.outputs.notes_file }}"
+          # Rebuild flags array from output (safe for spaces)
+          read -r -a FLAGS <<< "${{ steps.vars.outputs.flags }}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists. Updating…"
+            if [[ -n "$NOTES" ]]; then
+              gh release edit "$TAG" --notes-file "$NOTES" "${FLAGS[@]}"
+            else
+              gh release edit "$TAG" --generate-notes "${FLAGS[@]}"
+            fi
+          else
+            echo "Creating release $TAG"
+            if [[ -n "$NOTES" ]]; then
+              gh release create "$TAG" --title "$TAG" --notes-file "$NOTES" "${FLAGS[@]}"
+            else
+              gh release create "$TAG" --title "$TAG" --generate-notes "${FLAGS[@]}"
+            fi
           fi
