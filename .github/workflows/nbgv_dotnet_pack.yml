@@ -35,6 +35,21 @@ jobs:
         with:
           toolVersion: 3.8.38-alpha
 
+      - name: Validate SOLUTION_NAME
+        id: sln
+        run: |
+          set -euo pipefail
+          if [[ -z "${{ env.SOLUTION_NAME }}" ]]; then
+            echo "❌ SOLUTION_NAME repo variable is not set."; exit 1
+          fi
+          if [[ ! -f "${{ env.SOLUTION_NAME }}" ]]; then
+            echo "❌ SOLUTION_NAME='${{ env.SOLUTION_NAME }}' does not exist at repo root."
+            echo "Contents of repo root:"; ls -la
+            exit 1
+          fi
+          echo "sln=${{ env.SOLUTION_NAME }}" >> "$GITHUB_OUTPUT"
+          echo "✅ Using solution: ${{ env.SOLUTION_NAME }}"
+          
       - name: Restore
         run: dotnet restore "${{ env.SOLUTION_NAME }}"
 
@@ -58,7 +73,9 @@ jobs:
         run: |
           mkdir -p artifacts
           dotnet pack --no-build -c "${{ inputs.build_configuration }}" \
-            -o artifacts ${{ steps.rel.outputs.flag }}
+            -o artifacts \
+            -p:PackageVersion="${{ steps.nbgv.outputs.NuGetPackageVersion }}" \
+            ${{ steps.rel.outputs.flag }}
 
       - name: Push to NuGet
         run: |
