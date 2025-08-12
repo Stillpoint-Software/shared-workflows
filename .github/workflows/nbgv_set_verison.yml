@@ -38,6 +38,19 @@ on:
     secrets:
       GH_TOKEN:
         required: true
+    outputs:
+      new_simple:
+        description: "Final SimpleVersion (after any auto-bump)"
+        value: ${{ jobs.set-version.outputs.new_simple }}
+      new_prerelease:
+        description: "Final PrereleaseVersion (after any auto-bump)"
+        value: ${{ jobs.set-version.outputs.new_prerelease }}
+      new_nuget:
+        description: "Final NuGetPackageVersion (after any auto-bump)"
+        value: ${{ jobs.set-version.outputs.new_nuget }}
+      tag:
+        description: "Final tag name to use (v<NuGetPackageVersion>)"
+        value: ${{ jobs.set-version.outputs.tag }}
 
 permissions:
   contents: write
@@ -46,6 +59,13 @@ permissions:
 jobs:
   set-version:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}   # gh CLI auth
+    outputs:
+      new_simple:     ${{ steps.final.outputs.simple }}
+      new_prerelease: ${{ steps.final.outputs.pre }}
+      new_nuget:      ${{ steps.final.outputs.nuget }}
+      tag:            ${{ steps.final.outputs.tag }}
     steps:
       - name: Checkout branch
         uses: actions/checkout@v4
@@ -66,7 +86,7 @@ jobs:
           echo "nuget=$(jq -r .NuGetPackageVersion cur.json)" >> $GITHUB_OUTPUT
           echo "Current: $(cat cur.json)"
 
-      - name: Decide new version
+      - name: Decide desired baseline
         id: plan
         env:
           MODE: ${{ inputs.mode }}
@@ -106,7 +126,6 @@ jobs:
               elif [[ "$BR" == "main" || "$BR" =~ ^v[0-9]+\.[0-9]+$ ]]; then
                 NEW="${MAJOR}.${MINOR}.${PATCH}"
               else
-                # default: keep prerelease if any, else bump minor -alpha
                 if [[ -z "$PRE" ]]; then
                   MINOR=$((MINOR+1)); NEW="${MAJOR}.${MINOR}-alpha"
                 else
@@ -117,33 +136,115 @@ jobs:
             *) echo "Unsupported mode: $MODE"; exit 1 ;;
           esac
           echo "new=$NEW" >> $GITHUB_OUTPUT
-          echo "Planned new version: $NEW"
+          echo "Desired baseline: $NEW"
 
-      - name: Apply new version (nbgv set-version)
-        id: apply
+      - name: Apply baseline and enforce monotonic increase
+        id: ensure
         env:
           NEW: ${{ steps.plan.outputs.new }}
+          BR:  ${{ inputs.target_branch }}
           MSG: ${{ inputs.commit_message }}
         run: |
           set -euo pipefail
-          nbgv set-version "$NEW"
+
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
-          git add version.json
-          if git diff --cached --quiet; then
-            echo "No change to version.json (already $NEW)."
-            echo "changed=0" >> $GITHUB_OUTPUT
-          else
-            git commit -m "$MSG: $NEW"
-            git push origin HEAD:${{ inputs.target_branch }}
-            echo "changed=1" >> $GITHUB_OUTPUT
-          fi
 
-      - name: Read new version (outputs for callers)
-        id: new
+          # Helpers
+          pure() { echo "${1%%-*}"; } # strip -prerelease
+          verlte() { [ "$(printf "%s\n%s\n" "$1" "$2" | sort -V | head -1)" = "$1" ]; } # $1 <= $2 (SemVer-ish)
+          parse() { IFS='.' read -r MAJOR MINOR PATCH <<< "$1"; PATCH=${PATCH:-0}; }
+
+          # Highest existing tag (v-prefixed) -> HIGHEST (no 'v')
+          git fetch --tags --force
+          HIGHEST=$(git tag -l 'v*' | sed 's/^v//' | sort -V | tail -1 || true)
+          echo "Highest existing tag: ${HIGHEST:-<none>}"
+
+          attempt=0
+          max=4
+          while :; do
+            attempt=$((attempt+1))
+            echo "Attempt #$attempt: set baseline '$NEW'"
+
+            # write version.json (no-op if unchanged)
+            nbgv set-version "$NEW"
+            git add version.json
+            if git diff --cached --quiet; then
+              echo "No change to version.json (already $NEW)."
+            else
+              git commit -m "$MSG: $NEW"
+              git push origin HEAD:${{ inputs.target_branch }}
+            fi
+
+            # compute candidate from NBGV after applying baseline
+            nbgv get-version --format json > v.json
+            CANDIDATE="$(jq -r .NuGetPackageVersion v.json)"
+            SIMPLE="$(jq -r .SimpleVersion v.json)"
+            PRE="$(jq -r .PrereleaseVersion v.json)"
+            TAG="v${CANDIDATE}"
+            echo "Candidate version: $CANDIDATE (Simple=$SIMPLE, Pre='$PRE')"
+
+            # If no tags exist yet, we're done.
+            if [[ -z "$HIGHEST" ]]; then
+              echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
+              echo "simple=$SIMPLE" >> "$GITHUB_OUTPUT"
+              echo "pre=$PRE"       >> "$GITHUB_OUTPUT"
+              echo "nuget=$CANDIDATE" >> "$GITHUB_OUTPUT"
+              break
+            fi
+
+            # Require strictly greater than highest tag
+            if verlte "$CANDIDATE" "$HIGHEST"; then
+              echo "⚠️ $CANDIDATE <= highest tag $HIGHEST → bumping per branch policy…"
+
+              # Choose bump base as the max of current Simple vs highest pure (major.minor.patch)
+              HPURE="$(pure "$HIGHEST")"
+              parse "$SIMPLE";  cM=$MAJOR; cN=$MINOR; cP=$PATCH
+              parse "$HPURE";   hM=$MAJOR; hN=$MINOR; hP=$PATCH
+
+              # pick the larger (major,minor,patch) tuple
+              useH=0
+              if [[ $hM -gt $cM ]] || { [[ $hM -eq $cM ]] && [[ $hN -gt $cN || ( $hN -eq $cN && $hP -ge $cP ) ]]; }; then
+                useH=1
+              fi
+
+              if [[ "$BR" == "develop" ]]; then
+                if [[ $useH -eq 1 ]]; then
+                  NEW="${hM}.$((hN+1))-alpha"
+                else
+                  NEW="${cM}.$((cN+1))-alpha"
+                fi
+              elif [[ "$BR" =~ ^hotfix/ ]]; then
+                if [[ $useH -eq 1 ]]; then
+                  NEW="${hM}.${hN}.$((hP+1))-alpha"
+                else
+                  NEW="${cM}.${cN}.$((cP+1))-alpha"
+                fi
+              else # main or vX.Y
+                if [[ $useH -eq 1 ]]; then
+                  NEW="${hM}.${hN}.$((hP+1))"
+                else
+                  NEW="${cM}.${cN}.$((cP+1))"
+                fi
+              fi
+
+              echo "Auto-bumped baseline → $NEW"
+              [[ $attempt -lt $max ]] && continue || { echo "❌ Exhausted attempts."; exit 1; }
+            fi
+
+            # Candidate is strictly greater than any existing tag → done
+            echo "✅ Monotonic increase satisfied: $CANDIDATE > ${HIGHEST}"
+            echo "tag=$TAG"       >> "$GITHUB_OUTPUT"
+            echo "simple=$SIMPLE" >> "$GITHUB_OUTPUT"
+            echo "pre=$PRE"       >> "$GITHUB_OUTPUT"
+            echo "nuget=$CANDIDATE" >> "$GITHUB_OUTPUT"
+            break
+          done
+
+      - name: Final outputs for callers
+        id: final
         run: |
-          nbgv get-version --format json > new.json
-          echo "simple=$(jq -r .SimpleVersion new.json)" >> $GITHUB_OUTPUT
-          echo "pre=$(jq -r .PrereleaseVersion new.json)" >> $GITHUB_OUTPUT
-          echo "nuget=$(jq -r .NuGetPackageVersion new.json)" >> $GITHUB_OUTPUT
-          echo "New: $(cat new.json)"
+          echo "simple=${{ steps.ensure.outputs.simple }}" >> $GITHUB_OUTPUT
+          echo "pre=${{ steps.ensure.outputs.pre }}"       >> $GITHUB_OUTPUT
+          echo "nuget=${{ steps.ensure.outputs.nuget }}"   >> $GITHUB_OUTPUT
+          echo "tag=${{ steps.ensure.outputs.tag }}"       >> $GITHUB_OUTPUT
