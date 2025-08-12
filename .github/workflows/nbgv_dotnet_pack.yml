@@ -69,12 +69,16 @@ jobs:
             echo "flag=" >> $GITHUB_OUTPUT
           fi
 
-      - name: Pack (NBGV sets package versions)
+      - name: Pack (pin NBGV version + correct links)
         run: |
           mkdir -p artifacts
           dotnet pack --no-build -c "${{ inputs.build_configuration }}" \
+            "${{ steps.sln.outputs.sln }}" \
             -o artifacts \
             -p:PackageVersion="${{ steps.nbgv.outputs.NuGetPackageVersion }}" \
+            -p:PackageReleaseNotes="https://github.com/${{ github.repository }}/releases/latest" \
+            -p:RepositoryUrl="https://github.com/${{ github.repository }}" \
+            -p:PackageProjectUrl="https://github.com/${{ github.repository }}" \
             ${{ steps.rel.outputs.flag }}
 
       - name: Push to NuGet
