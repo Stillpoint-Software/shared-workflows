@@ -1,0 +1,250 @@
+name: Set Version
+
+on:
+  workflow_call:
+    inputs:
+      target_branch:
+        description: 'Branch to update (e.g., develop, main, hotfix/foo, v1.2)'
+        type: string
+        required: true
+      mode:
+        description: |
+          How to set the version:
+          - explicit: set to a specific value (e.g., 1.3-alpha)
+          - bump: bump major/minor/patch from current SimpleVersion and apply optional prerelease
+          - auto: policy-based (develop -> next minor -alpha; hotfix/* -> next patch -alpha; main/vX.Y -> stable)
+        type: string
+        required: true
+        default: auto
+      version:
+        description: 'Required when mode=explicit (e.g., 1.3-alpha, 1.2.3, 1.4.0-rc)'
+        type: string
+        required: false
+      increment:
+        description: 'When mode=bump: major | minor | patch'
+        type: string
+        required: false
+        default: minor
+      prerelease:
+        description: 'When mode=bump: prerelease suffix without leading dash (e.g., alpha, beta, rc). Empty for stable.'
+        type: string
+        required: false
+        default: ""
+      commit_message:
+        description: 'Optional custom commit message'
+        type: string
+        required: false
+        default: "chore(nbgv): set version via CI"
+    secrets:
+      GH_TOKEN:
+        required: true
+    outputs:
+      new_simple:
+        description: "Final SimpleVersion (after any auto-bump)"
+        value: ${{ jobs.set-version.outputs.new_simple }}
+      new_prerelease:
+        description: "Final PrereleaseVersion (after any auto-bump)"
+        value: ${{ jobs.set-version.outputs.new_prerelease }}
+      new_nuget:
+        description: "Final NuGetPackageVersion (after any auto-bump)"
+        value: ${{ jobs.set-version.outputs.new_nuget }}
+      tag:
+        description: "Final tag name to use (v<NuGetPackageVersion>)"
+        value: ${{ jobs.set-version.outputs.tag }}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  set-version:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}   # gh CLI auth
+    outputs:
+      new_simple:     ${{ steps.final.outputs.simple }}
+      new_prerelease: ${{ steps.final.outputs.pre }}
+      new_nuget:      ${{ steps.final.outputs.nuget }}
+      tag:            ${{ steps.final.outputs.tag }}
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Install nbgv
+        run: dotnet tool update -g nbgv --version 3.8.38-alpha || dotnet tool install -g nbgv --version 3.8.38-alpha
+
+      - name: Read current version
+        id: cur
+        run: |
+          nbgv get-version --format json > cur.json
+          echo "simple=$(jq -r .SimpleVersion cur.json)" >> $GITHUB_OUTPUT
+          echo "pre=$(jq -r .PrereleaseVersion cur.json)" >> $GITHUB_OUTPUT
+          echo "nuget=$(jq -r .NuGetPackageVersion cur.json)" >> $GITHUB_OUTPUT
+          echo "Current: $(cat cur.json)"
+
+      - name: Decide desired baseline
+        id: plan
+        env:
+          MODE: ${{ inputs.mode }}
+          SIMPLE: ${{ steps.cur.outputs.simple }}
+          PRE: ${{ steps.cur.outputs.pre }}
+          INCR: ${{ inputs.increment }}
+          PRENAME: ${{ inputs.prerelease }}
+          EXPLICIT: ${{ inputs.version }}
+          BR: ${{ inputs.target_branch }}
+        run: |
+          set -euo pipefail
+          parse_semver() { IFS='.' read -r MAJOR MINOR PATCH <<< "$1"; PATCH=${PATCH:-0}; }
+          NEW=""
+          case "$MODE" in
+            explicit)
+              [[ -n "$EXPLICIT" ]] || { echo "version is required for mode=explicit"; exit 1; }
+              NEW="$EXPLICIT"
+              ;;
+            bump)
+              parse_semver "$SIMPLE"
+              case "$INCR" in
+                major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+                minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+                patch) PATCH=$((PATCH+1)) ;;
+                *) echo "increment must be major|minor|patch"; exit 1 ;;
+              esac
+              [[ -n "$PRENAME" ]] && NEW="${MAJOR}.${MINOR}.${PATCH}-${PRENAME}" || NEW="${MAJOR}.${MINOR}.${PATCH}"
+              ;;
+            auto)
+              parse_semver "$SIMPLE"
+              if [[ "$BR" == "develop" ]]; then
+                [[ -z "$PRE" ]] && MINOR=$((MINOR+1))
+                NEW="${MAJOR}.${MINOR}-alpha"
+              elif [[ "$BR" =~ ^hotfix/ ]]; then
+                [[ -z "$PRE" ]] && PATCH=$((PATCH+1))
+                NEW="${MAJOR}.${MINOR}.${PATCH}-alpha"
+              elif [[ "$BR" == "main" || "$BR" =~ ^v[0-9]+\.[0-9]+$ ]]; then
+                NEW="${MAJOR}.${MINOR}.${PATCH}"
+              else
+                if [[ -z "$PRE" ]]; then
+                  MINOR=$((MINOR+1)); NEW="${MAJOR}.${MINOR}-alpha"
+                else
+                  NEW="${MAJOR}.${MINOR}.${PATCH}-alpha"
+                fi
+              fi
+              ;;
+            *) echo "Unsupported mode: $MODE"; exit 1 ;;
+          esac
+          echo "new=$NEW" >> $GITHUB_OUTPUT
+          echo "Desired baseline: $NEW"
+
+      - name: Apply baseline and enforce monotonic increase
+        id: ensure
+        env:
+          NEW: ${{ steps.plan.outputs.new }}
+          BR:  ${{ inputs.target_branch }}
+          MSG: ${{ inputs.commit_message }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+          # Helpers
+          pure() { echo "${1%%-*}"; } # strip -prerelease
+          verlte() { [ "$(printf "%s\n%s\n" "$1" "$2" | sort -V | head -1)" = "$1" ]; } # $1 <= $2 (SemVer-ish)
+          parse() { IFS='.' read -r MAJOR MINOR PATCH <<< "$1"; PATCH=${PATCH:-0}; }
+
+          # Highest existing tag (v-prefixed) -> HIGHEST (no 'v')
+          git fetch --tags --force
+          HIGHEST=$(git tag -l 'v*' | sed 's/^v//' | sort -V | tail -1 || true)
+          echo "Highest existing tag: ${HIGHEST:-<none>}"
+
+          attempt=0
+          max=4
+          while :; do
+            attempt=$((attempt+1))
+            echo "Attempt #$attempt: set baseline '$NEW'"
+
+            # write version.json (no-op if unchanged)
+            nbgv set-version "$NEW"
+            git add version.json
+            if git diff --cached --quiet; then
+              echo "No change to version.json (already $NEW)."
+            else
+              git commit -m "$MSG: $NEW"
+              git push origin HEAD:${{ inputs.target_branch }}
+            fi
+
+            # compute candidate from NBGV after applying baseline
+            nbgv get-version --format json > v.json
+            CANDIDATE="$(jq -r .NuGetPackageVersion v.json)"
+            SIMPLE="$(jq -r .SimpleVersion v.json)"
+            PRE="$(jq -r .PrereleaseVersion v.json)"
+            TAG="v${CANDIDATE}"
+            echo "Candidate version: $CANDIDATE (Simple=$SIMPLE, Pre='$PRE')"
+
+            # If no tags exist yet, we're done.
+            if [[ -z "$HIGHEST" ]]; then
+              echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
+              echo "simple=$SIMPLE" >> "$GITHUB_OUTPUT"
+              echo "pre=$PRE"       >> "$GITHUB_OUTPUT"
+              echo "nuget=$CANDIDATE" >> "$GITHUB_OUTPUT"
+              break
+            fi
+
+            # Require strictly greater than highest tag
+            if verlte "$CANDIDATE" "$HIGHEST"; then
+              echo "⚠️ $CANDIDATE <= highest tag $HIGHEST → bumping per branch policy…"
+
+              # Choose bump base as the max of current Simple vs highest pure (major.minor.patch)
+              HPURE="$(pure "$HIGHEST")"
+              parse "$SIMPLE";  cM=$MAJOR; cN=$MINOR; cP=$PATCH
+              parse "$HPURE";   hM=$MAJOR; hN=$MINOR; hP=$PATCH
+
+              # pick the larger (major,minor,patch) tuple
+              useH=0
+              if [[ $hM -gt $cM ]] || { [[ $hM -eq $cM ]] && [[ $hN -gt $cN || ( $hN -eq $cN && $hP -ge $cP ) ]]; }; then
+                useH=1
+              fi
+
+              if [[ "$BR" == "develop" ]]; then
+                if [[ $useH -eq 1 ]]; then
+                  NEW="${hM}.$((hN+1))-alpha"
+                else
+                  NEW="${cM}.$((cN+1))-alpha"
+                fi
+              elif [[ "$BR" =~ ^hotfix/ ]]; then
+                if [[ $useH -eq 1 ]]; then
+                  NEW="${hM}.${hN}.$((hP+1))-alpha"
+                else
+                  NEW="${cM}.${cN}.$((cP+1))-alpha"
+                fi
+              else # main or vX.Y
+                if [[ $useH -eq 1 ]]; then
+                  NEW="${hM}.${hN}.$((hP+1))"
+                else
+                  NEW="${cM}.${cN}.$((cP+1))"
+                fi
+              fi
+
+              echo "Auto-bumped baseline → $NEW"
+              [[ $attempt -lt $max ]] && continue || { echo "❌ Exhausted attempts."; exit 1; }
+            fi
+
+            # Candidate is strictly greater than any existing tag → done
+            echo "✅ Monotonic increase satisfied: $CANDIDATE > ${HIGHEST}"
+            echo "tag=$TAG"       >> "$GITHUB_OUTPUT"
+            echo "simple=$SIMPLE" >> "$GITHUB_OUTPUT"
+            echo "pre=$PRE"       >> "$GITHUB_OUTPUT"
+            echo "nuget=$CANDIDATE" >> "$GITHUB_OUTPUT"
+            break
+          done
+
+      - name: Final outputs for callers
+        id: final
+        run: |
+          echo "simple=${{ steps.ensure.outputs.simple }}" >> $GITHUB_OUTPUT
+          echo "pre=${{ steps.ensure.outputs.pre }}"       >> $GITHUB_OUTPUT
+          echo "nuget=${{ steps.ensure.outputs.nuget }}"   >> $GITHUB_OUTPUT
+          echo "tag=${{ steps.ensure.outputs.tag }}"       >> $GITHUB_OUTPUT

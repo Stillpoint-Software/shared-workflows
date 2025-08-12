@@ -1,0 +1,137 @@
+name: Prepare Release
+
+on:
+  workflow_call:
+    inputs:
+      target_branch:
+        description: 'Branch to release from (e.g., main, develop, hotfix/xyz, v1.2)'
+        type: string
+        required: true
+      tag:
+        description: 'Final tag name from nbgv_set_version (v<NuGetPackageVersion>)'
+        type: string
+        required: true
+      prerelease:
+        description: "Prerelease suffix from nbgv_set_version (e.g., '-alpha'), empty for stable"
+        type: string
+        required: false
+        default: ""
+      draft:
+        description: "Create release as draft"
+        type: boolean
+        required: false
+        default: true
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+    steps:
+      - name: Checkout target branch (full history for notes/compare)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.target_branch }}
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Compute flags from inputs
+        id: vars
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          PRE="${{ inputs.prerelease }}"
+          DRAFT="${{ inputs.draft }}"
+          FLAGS=()
+          [[ "$DRAFT" == "true" ]] && FLAGS+=(--draft)
+          [[ -n "$PRE"   ]] && FLAGS+=(--prerelease)
+          echo "tag=$TAG"  >> "$GITHUB_OUTPUT"
+          echo "flags=${FLAGS[*]}" >> "$GITHUB_OUTPUT"
+          echo "Using TAG=$TAG, DRAFT=$DRAFT, PRE='${PRE}'"
+
+      - name: Build release notes from CHANGELOG.md (if available)
+        id: notes
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.vars.outputs.tag }}"      # e.g., v1.2.3
+          VER="${TAG#v}"                           # 1.2.3
+          FILE="CHANGELOG.md"
+          OUT="RELEASE_NOTES.md"
+
+          if [[ -f "$FILE" ]]; then
+            # Extract section "## vX.Y.Z" or "## [vX.Y.Z]" up to next "## "
+            awk -v ver="$VER" '
+              BEGIN { found=0 }
+              $0 ~ "^##[[:space:]]*\\[?v?" ver "\\]?([[:space:]]|$)" { found=1; print; next }
+              found && /^##[[:space:]]/ { exit }
+              found { print }
+            ' "$FILE" > "$OUT" || true
+          fi
+
+          if [[ ! -s "$OUT" ]]; then
+            echo "## ${TAG}" > "$OUT"
+            prev="$(git tag --sort=-creatordate | grep -v "^${TAG}$" | head -n1 || true)"
+            if [[ -n "$prev" ]]; then
+              echo "" >> "$OUT"
+              echo "_Changes since ${prev}_" >> "$OUT"
+              echo "" >> "$OUT"
+              git log --no-merges --pretty=format:"- %s (%h) by %an" "${prev}..HEAD" >> "$OUT" || true
+              echo "" >> "$OUT"
+              echo "[Compare ${prev}…${TAG}](https://github.com/${{ github.repository }}/compare/${prev}...${TAG})" >> "$OUT"
+            else
+              echo "" >> "$OUT"
+              git log --no-merges --pretty=format:"- %s (%h) by %an" >> "$OUT" || true
+            fi
+          fi
+
+          if [[ -s "$OUT" ]]; then
+            echo "notes_file=$OUT" >> "$GITHUB_OUTPUT"
+          else
+            echo "notes_file=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ensure tag exists
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.vars.outputs.tag }}"
+          git fetch --tags --force
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Tag $TAG already exists (ok)."
+          else
+            git config user.name "${{ github.actor }}"
+            git config user.email "${{ github.actor }}@users.noreply.github.com"
+            git tag -a "$TAG" -m "$TAG"
+            git push origin "refs/tags/$TAG"
+          fi
+
+      - name: Create or update GitHub Release
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.vars.outputs.tag }}"
+          NOTES="${{ steps.notes.outputs.notes_file }}"
+          # Rebuild flags array from output (safe for spaces)
+          read -r -a FLAGS <<< "${{ steps.vars.outputs.flags }}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists. Updating…"
+            if [[ -n "$NOTES" ]]; then
+              gh release edit "$TAG" --notes-file "$NOTES" "${FLAGS[@]}"
+            else
+              gh release edit "$TAG" --generate-notes "${FLAGS[@]}"
+            fi
+          else
+            echo "Creating release $TAG"
+            if [[ -n "$NOTES" ]]; then
+              gh release create "$TAG" --title "$TAG" --notes-file "$NOTES" "${FLAGS[@]}"
+            else
+              gh release create "$TAG" --title "$TAG" --generate-notes "${FLAGS[@]}"
+            fi
+          fi

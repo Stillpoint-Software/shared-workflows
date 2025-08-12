@@ -1,0 +1,89 @@
+name: Pack & Publish Package
+
+on:
+  workflow_call:
+    inputs:
+      build_configuration:
+        description: 'Build configuration'
+        required: true
+        type: string
+        default: 'Release'
+    secrets:
+      NUGET_API_KEY:
+        required: true
+
+env:
+  SOLUTION_NAME: ${{ vars.SOLUTION_NAME }}
+  DOTNET_VERSION: '9.0.x'
+  NUGET_SOURCE: 'https://api.nuget.org/v3/index.json'
+
+jobs:
+  build-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Nerdbank.GitVersioning (outputs)
+        id: nbgv
+        uses: dotnet/nbgv@v0.4.2
+        with:
+          toolVersion: 3.8.38-alpha
+
+      - name: Validate SOLUTION_NAME
+        id: sln
+        run: |
+          set -euo pipefail
+          if [[ -z "${{ env.SOLUTION_NAME }}" ]]; then
+            echo "❌ SOLUTION_NAME repo variable is not set."; exit 1
+          fi
+          if [[ ! -f "${{ env.SOLUTION_NAME }}" ]]; then
+            echo "❌ SOLUTION_NAME='${{ env.SOLUTION_NAME }}' does not exist at repo root."
+            echo "Contents of repo root:"; ls -la
+            exit 1
+          fi
+          echo "sln=${{ env.SOLUTION_NAME }}" >> "$GITHUB_OUTPUT"
+          echo "✅ Using solution: ${{ env.SOLUTION_NAME }}"
+          
+      - name: Restore
+        run: dotnet restore "${{ env.SOLUTION_NAME }}"
+
+      - name: Build
+        run: dotnet build --no-restore -c "${{ inputs.build_configuration }}" "${{ env.SOLUTION_NAME }}"
+
+      - name: Test
+        run: dotnet test --no-build -c "${{ inputs.build_configuration }}" "${{ env.SOLUTION_NAME }}"
+
+      - name: Decide PublicRelease (stable only)
+        id: rel
+        run: |
+          PRE="${{ steps.nbgv.outputs.PrereleaseVersion }}"
+          if [[ -z "$PRE" ]]; then
+            echo "flag=-p:PublicRelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "flag=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Pack (pin NBGV version + correct links)
+        run: |
+          mkdir -p artifacts
+          dotnet pack --no-build -c "${{ inputs.build_configuration }}" \
+            "${{ steps.sln.outputs.sln }}" \
+            -o artifacts \
+            -p:PackageVersion="${{ steps.nbgv.outputs.NuGetPackageVersion }}" \
+            -p:PackageReleaseNotes="https://github.com/${{ github.repository }}/releases/latest" \
+            -p:RepositoryUrl="https://github.com/${{ github.repository }}" \
+            -p:PackageProjectUrl="https://github.com/${{ github.repository }}" \
+            ${{ steps.rel.outputs.flag }}
+
+      - name: Push to NuGet
+        run: |
+          dotnet nuget push "artifacts/*.nupkg" \
+            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --source "${{ env.NUGET_SOURCE }}" \
+            --skip-duplicate
