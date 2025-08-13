@@ -21,9 +21,6 @@ on:
         type: boolean
         required: false
         default: true
-    secrets:
-      GH_TOKEN:
-        required: true
 
 permissions:
   contents: write
