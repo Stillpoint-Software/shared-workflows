@@ -30,12 +30,15 @@ permissions:
 jobs:
   create-release:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
     steps:
       - name: Checkout target branch (full history for notes/compare)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ inputs.target_branch }}
+          token: ${{ secrets.GH_TOKEN }}
 
       - name: Compute flags from inputs
         id: vars
