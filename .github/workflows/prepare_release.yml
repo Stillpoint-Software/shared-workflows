@@ -38,7 +38,6 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ inputs.target_branch }}
-          token: ${{ secrets.GH_TOKEN }}
 
       - name: Compute flags from inputs
         id: vars
