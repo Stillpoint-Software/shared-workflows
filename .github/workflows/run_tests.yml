@@ -1,74 +1,108 @@
-name: Run Tests
+name: Test
 
 on:
   workflow_call:
     inputs:
       branch:
-        required: false
+        description: "Branch to test"
         type: string
+        required: true
       solution_name:
+        description: "Solution file to build and test"
         required: true
         type: string
-
-permissions:
-  contents: read
-  actions: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        dotnet: [ '8.0.x', '9.0.x' ]
 
     env:
       SOLUTION_NAME: ${{ inputs.solution_name }}
-      BRANCH_NAME:  ${{ inputs.branch || github.ref_name }}
+      BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
 
     steps:
-      - name: Checkout @ branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ env.BRANCH_NAME }}
-          fetch-depth: 0
-
-      - name: Setup .NET ${{ matrix.dotnet }}
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ matrix.dotnet }}
-
-      - name: Restore
-        run: dotnet restore "${SOLUTION_NAME}"
-
-      - name: Set Build Configuration
+      - name: Set Build Configuration (Release if main)
         run: |
-          if [[ "${BRANCH_NAME}" == "main" || "${BRANCH_NAME}" == "develop" ]]; then
+          if [ "${{ env.BRANCH_NAME }}" = "main" ]; then
             echo "BUILD_CONFIGURATION=Release" >> $GITHUB_ENV
           else
             echo "BUILD_CONFIGURATION=Debug" >> $GITHUB_ENV
           fi
 
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Setup .NET SDKs
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            9.0.x
+            8.0.x
+
+      - name: Restore Dependencies
+        run: dotnet restore ${{ env.SOLUTION_NAME }}
+
       - name: Build
-        run: dotnet build "${SOLUTION_NAME}" --no-restore --configuration "${BUILD_CONFIGURATION}"
+        run: dotnet build --no-restore --configuration ${{ env.BUILD_CONFIGURATION }} ${{ env.SOLUTION_NAME }}
 
-      - name: Test (.trx)
+      - name: Run Tests
         run: |
-          DIR="test-results-${{ startsWith(matrix.dotnet, '9.') && 'net9.0' || 'net8.0' }}"
-          mkdir -p "$DIR"
-          # Single run collects TRX from all test projects
-          dotnet test "${SOLUTION_NAME}" \
-            --no-build \
-            --configuration "${BUILD_CONFIGURATION}" \
-            --logger "trx;LogFileName=${DIR}.trx" \
-            --results-directory "$DIR"
+          mkdir -p TestResults
+          found=false
+          for proj in $(find . -name "*.Tests.csproj"); do
+            found=true
+            frameworks=$(grep -oPm1 "(?<=<TargetFrameworks>)[^<]+" "$proj" || true)
+            if [ -z "$frameworks" ]; then
+              frameworks=$(grep -oPm1 "(?<=<TargetFramework>)[^<]+" "$proj" || true)
+            fi
+            for fw in $(echo $frameworks | tr ';' ' '); do
+              results_dir="./TestResults/$fw"
+              mkdir -p "$results_dir"
+              dotnet test "$proj" \
+                --no-build \
+                --configuration ${{ env.BUILD_CONFIGURATION }} \
+                --framework $fw \
+                --logger "trx;LogFileName=$(basename $proj)-$fw.trx" \
+                --results-directory "$results_dir"
+            done
+          done
+          if [ "$found" = false ]; then
+            echo "⚠️ No test projects (*.Tests.csproj) were found."
+            exit 1
+          fi
 
-      - name: Upload TRX
-        if: always()
+      - name: Ensure .NET 9.0 Results Exist
+        run: |
+          mkdir -p ./TestResults/net9.0
+          if ! compgen -G "./TestResults/net9.0/*.trx" > /dev/null; then
+            echo "⚠️ No .NET 9.0 test results" > ./TestResults/net9.0/placeholder.txt
+          fi
+
+      - name: Upload .NET 9.0 Test Results
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ startsWith(matrix.dotnet, '9.') && 'test-results-net9.0' || 'test-results-net8.0' }}
+          name: test-results-net9.0
+          # only upload trx + placeholder, ignore everything else
           path: |
-            test-results-*/**/*.trx
-          if-no-files-found: warn
-          retention-days: 7
+            ./TestResults/net9.0/*.trx
+            ./TestResults/net9.0/placeholder.txt
+          overwrite: true
+
+      - name: Ensure .NET 8.0 Results Exist
+        run: |
+          mkdir -p ./TestResults/net8.0
+          if ! compgen -G "./TestResults/net8.0/*.trx" > /dev/null; then
+            echo "⚠️ No .NET 8.0 test results" > ./TestResults/net8.0/placeholder.txt
+          fi
+
+      - name: Upload .NET 8.0 Test Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-net8.0
+          path: |
+            ./TestResults/net8.0/*.trx
+            ./TestResults/net8.0/placeholder.txt
+          overwrite: true
