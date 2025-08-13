@@ -12,10 +12,6 @@ on:
         required: false
         default: "9.0.x"
         type: string
-    secrets:
-      GH_TOKEN:
-        description: "GitHub token with write permissions"
-        required: false
 
 jobs:
   format:
