@@ -2,10 +2,6 @@ name: Issue Branch
 
 on:
   workflow_call:
-    secrets:
-      GH_TOKEN:
-        description: "GitHub token with write permissions"
-        required: true
 
 jobs:
   create_issue_branch_job:
@@ -14,5 +10,3 @@ jobs:
       - name: Create Issue Branch
         id: Create_Issue_Branch
         uses: robvanderleek/create-issue-branch@main
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
