@@ -9,8 +9,6 @@ on:
       package_version:
         required: true
         type: string
-      reason:
-        type: string
       dry_run:
         type: boolean
         default: false
@@ -27,7 +25,6 @@ jobs:
     env:
       PACKAGE_ID:   ${{ inputs.package_id }}
       RAW_VERSION:  ${{ inputs.package_version }}
-      REASON:       ${{ inputs.reason }}
       DRY_RUN:      ${{ inputs.dry_run }}
       NUGET_SOURCE: https://api.nuget.org/v3/index.json
 
@@ -74,7 +71,3 @@ jobs:
             --non-interactive \
             --force-english-output
           echo "Successfully unlisted ${PACKAGE_ID} ${NORMALISED_VERSION}"
-
-      - name: Log reason (optional)
-        if: ${{ env.REASON != '' && env.DRY_RUN != 'true' }}
-        run: echo "Reason – $REASON"
