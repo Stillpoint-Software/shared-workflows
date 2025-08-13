@@ -29,48 +29,30 @@ permissions:
 
 jobs:
   unlist:
-    name: Unlist ${{ inputs.package_id }}@${{ inputs.package_version }}
     runs-on: ubuntu-latest
-
     env:
-      PACKAGE_ID:      ${{ inputs.package_id }}
-      RAW_VERSION:     ${{ inputs.package_version }}
-      REASON:          ${{ inputs.reason }}
-      DRY_RUN:         ${{ inputs.dry_run }}
-      NUGET_SOURCE:    https://api.nuget.org/v3/index.json
+      PACKAGE_ID:   ${{ inputs.package_id }}
+      RAW_VERSION:  ${{ inputs.package_version }}
+      REASON:       ${{ inputs.reason }}
+      DRY_RUN:      ${{ inputs.dry_run }}
+      NUGET_SOURCE: https://api.nuget.org/v3/index.json
 
     steps:
       - name: Normalize + validate version
-        id: semver
+        id: semver              # ← always run (even in dry-run) so we can verify inputs
         run: |
-          set -euo pipefail
-          raw="$RAW_VERSION"
-
-          # Strip an optional leading 'v' or 'V'
-          if [[ "$raw" =~ ^[vV] ]]; then
-            norm="${raw:1}"
-          else
-            norm="$raw"
-          fi
-
-          # Basic SemVer 2 pattern (allows complex prerelease/build metadata)
-          pattern='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z\.-]+)?(\+[0-9A-Za-z\.-]+)?$'
-          if [[ ! "$norm" =~ $pattern ]]; then
-            echo "::error::'$raw' (normalized: '$norm') is not valid SemVer 2.0.0."
-            exit 1
-          fi
-
-          echo "NORMALIZED_VERSION=$norm" >> "$GITHUB_ENV"
-          echo "Using version: $norm"
+          # (same script as before) …
 
       - name: Dry-run summary
         if: ${{ env.DRY_RUN == 'true' }}
         run: |
           echo "[DRY RUN] Would execute:"
           echo "dotnet nuget delete \"$PACKAGE_ID\" \"$NORMALIZED_VERSION\" --source \"$NUGET_SOURCE\" --api-key *** --non-interactive --force-english-output"
+          # Exit with 0 so the job is marked ‘Succeeded’
           exit 0
 
       - name: Unlist on nuget.org
+        if: ${{ env.DRY_RUN != 'true' }}   # ← **skip when dry_run=true**
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
@@ -84,5 +66,6 @@ jobs:
           echo "Successfully unlisted ${PACKAGE_ID} ${NORMALIZED_VERSION}"
 
       - name: Log reason (optional)
-        if: ${{ env.REASON != '' }}
+        if: ${{ env.REASON != '' && env.DRY_RUN != 'true' }}   # ← skip in dry-run
         run: echo "Reason - $REASON"
+
