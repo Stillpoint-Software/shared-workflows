@@ -35,9 +35,7 @@ on:
         type: string
         required: false
         default: "chore(nbgv): set version via CI"
-    secrets:
-      GH_TOKEN:
-        required: true
+
     outputs:
       new_simple:
         description: "Final SimpleVersion (after any auto-bump)"
