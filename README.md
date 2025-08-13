@@ -262,32 +262,46 @@ jobs:
    - Minimal recommended content:
 ```xml
 <Project>
+  <!-- Shared package refs -->
   <ItemGroup>
+    <!-- NBGV drives versions; PrivateAssets=all keeps it out of consumers -->
     <PackageReference Include="Nerdbank.GitVersioning" Version="3.8.38-alpha" PrivateAssets="all" />
+    <!-- SourceLink for GitHub -->
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
   </ItemGroup>
 
+  <!-- SourceLink / build hygiene -->
   <PropertyGroup>
+    <!-- Deterministic builds + embed sources for better debugging -->
     <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
     <Deterministic>true</Deterministic>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
   </PropertyGroup>
 
-  <!-- Only for packable projects -->
+  <!-- Package metadata applied only to packable projects -->
   <PropertyGroup Condition="'$(IsPackable)' == 'true'">
+    <!-- NuGet README -->
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageReleaseNotes>https://github.com/Github Organization Name/ProjectName/releases/latest</PackageReleaseNotes>
-    <RepositoryUrl>https://github.com/Github Organization Name/ProjectName</RepositoryUrl>
+
+    <!-- NuGet Release Notes link -->
+    <PackageReleaseNotes>https://github.com/Stillpoint-Software/Hyperbee.XS/releases/latest</PackageReleaseNotes>
+
+    <!-- Repository metadata (shows on NuGet) -->
+    <RepositoryUrl>https://github.com/Stillpoint-Software/Hyperbee</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <PackageProjectUrl>https://github.com/Github Organization Name/ProjectName</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/Stillpoint-Software/Hyperbee</PackageProjectUrl>
   </PropertyGroup>
 
+  <!-- Pull the root README into the package root -->
   <ItemGroup Condition="'$(IsPackable)' == 'true'">
-    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Link="README.md" />
+    <None Include="$(MSBuildThisFileDirectory)README.md"
+          Pack="true"
+          PackagePath="\"
+          Link="README.md" />
   </ItemGroup>
 </Project>
 ```
