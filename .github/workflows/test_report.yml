@@ -5,45 +5,59 @@ on:
     inputs:
       test_run_id:
         description: "Run ID of the completed Test workflow"
-        required: false
+        required: true
         type: string
       branch:
-        description: "Branch Test was run on"
+        description: "Branch that Test ran on (for checkout/annotations)"
         required: false
-        type: string       
-        
+        type: string
+
 permissions:
   contents: read
-  actions: read      
+  actions: read
   checks: write
 
 jobs:
   report:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code @ tested SHA
+      - name: Checkout code @ tested branch (optional, helps annotations)
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.branch }}
+          # Fallback to the caller's ref if no branch was passed
+          ref: ${{ inputs.branch || github.ref }}
           fetch-depth: 0
 
-      - name: ⬇️  Download ALL artifacts from Test run
-        if: ${{ inputs.test_run_id != '' }}        # manual runs only
+      - name: ⬇️ Download artifacts from Test run
         uses: actions/download-artifact@v4
         with:
-            repository:   ${{ github.repository }} 
-            run-id:       ${{ inputs.test_run_id }}
-            path:         .
-            github-token: ${{ secrets.GITHUB_TOKEN || github.token }}
-      
-      - uses: dorny/test-reporter@v1
+          repository:   ${{ github.repository }}
+          run-id:       ${{ inputs.test_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN || github.token }}
+          pattern:      test-results*         # adjust to your artifact name(s)
+          merge-multiple: true
+          path:         artifacts
+
+      - name: List downloaded files
+        run: |
+          echo "Downloaded to ./artifacts"
+          find artifacts -type f -print || true
+
+      - name: 🧪 Test Report
+        id: report
+        uses: dorny/test-reporter@v2
         with:
-          artifact: /test-results-net[89]\.0/
           name: "Unit Tests (.NET 8 & 9)"
-          path: '**/*.trx'
+          path: "artifacts/**/*.trx"      # ← use local files we just downloaded
           reporter: dotnet-trx
           fail-on-error: false
           fail-on-empty: false
           list-suites: all
           list-tests: all
           max-annotations: 10
+          use-actions-summary: true
+
+      - name: Echo report links
+        run: |
+          echo "Check Run (API):  ${{ steps.report.outputs.url }}"
+          echo "Check Run (HTML): ${{ steps.report.outputs.url_html }}"
