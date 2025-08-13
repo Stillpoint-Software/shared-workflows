@@ -30,8 +30,6 @@ permissions:
 jobs:
   create-release:
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}
     steps:
       - name: Checkout target branch (full history for notes/compare)
         uses: actions/checkout@v4
