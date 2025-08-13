@@ -1,4 +1,4 @@
-name: Test Report
+name: Test Report (reusable)
 
 on:
   workflow_call:
@@ -8,7 +8,11 @@ on:
         required: true
         type: string
       branch:
-        description: "Branch that Test ran on (for checkout/annotations)"
+        description: "Branch the tests ran on (optional)"
+        required: false
+        type: string
+      sha:
+        description: "Exact commit tested (preferred for precise annotations)"
         required: false
         type: string
 
@@ -21,11 +25,24 @@ jobs:
   report:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code @ tested branch (optional, helps annotations)
+      - name: Checkout @ tested commit (preferred)
+        if: ${{ inputs.sha != '' }}
         uses: actions/checkout@v4
         with:
-          # Fallback to the caller's ref if no branch was passed
-          ref: ${{ inputs.branch || github.ref }}
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+
+      - name: Checkout @ tested branch (fallback)
+        if: ${{ inputs.sha == '' && inputs.branch != '' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Checkout @ caller ref (last resort)
+        if: ${{ inputs.sha == '' && inputs.branch == '' }}
+        uses: actions/checkout@v4
+        with:
           fetch-depth: 0
 
       - name: ⬇️ Download artifacts from Test run
@@ -34,7 +51,7 @@ jobs:
           repository:   ${{ github.repository }}
           run-id:       ${{ inputs.test_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN || github.token }}
-          pattern:      test-results*         # adjust to your artifact name(s)
+          pattern:      test-results*      # ← matches the names uploaded above
           merge-multiple: true
           path:         artifacts
 
