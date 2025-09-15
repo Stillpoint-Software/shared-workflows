@@ -162,3 +162,26 @@ jobs:
           --body  "Updates cookiecutter.template_sha from ${{ steps.old_sha.outputs.sha }} to ${{ steps.new_sha.outputs.sha }}" \
           --base  '${{ inputs.repo_branch }}' \
           --head  "$BRANCH"
+    - name: Final cleanup (remove temp dirs & neutralize bad .gitmodules)
+      if: always()
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Remove temporary working folders & patch file
+        rm -rf base-template template-source template-base template-new update.patch
+
+        # Defensive: if a stray/invalid .gitmodules exists (missing URL entries),
+        # delete it so actions/checkout post-job doesn't crash on submodule foreach.
+        if [ -f .gitmodules ]; then
+          if ! git config -f .gitmodules --get-regexp '^submodule\..*\.url$' >/dev/null 2>&1; then
+            echo "Removing invalid .gitmodules (no submodule URLs found)."
+            rm -f .gitmodules
+            # Purge any lingering local submodule config and modules dir
+            git config --local --name-only --get-regexp '^submodule\.' \
+              | xargs -r -n1 -I {} git config --local --unset-all "{}"
+            rm -rf .git/modules || true
+          fi
+        fi
+
+        echo "Cleanup complete."
