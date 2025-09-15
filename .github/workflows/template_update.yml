@@ -102,8 +102,8 @@ jobs:
         if [ ! -s update.patch ]; then
           echo "ℹ️  No template diffs; only SHA bump will occur."
         else
-          if ! git apply --3way update.patch; then
-            echo "::error ::Merge conflicts detected; aborting."
+          if ! patch -p1 < update.patch; then
+            echo "::error ::Patch could not be applied; possible conflict or missing files."
             exit 1
           fi
           git add -A
