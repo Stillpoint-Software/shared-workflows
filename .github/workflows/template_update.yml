@@ -102,6 +102,15 @@ jobs:
         if [ ! -s update.patch ]; then
           echo "ℹ️  No template diffs; only SHA bump will occur."
         else
+          # Pre-create needed directories
+          awk '/^\+\+\+ / { 
+            file = $2; 
+            gsub(/^b\//, "", file); 
+            if (match(file, /(.+)\//, arr)) { 
+              print arr[1] 
+            }
+          }' update.patch | sort | uniq | xargs -r mkdir -p
+
           if ! patch -p1 < update.patch; then
             echo "::error ::Patch could not be applied; possible conflict or missing files."
             exit 1
