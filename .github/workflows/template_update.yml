@@ -27,6 +27,7 @@ jobs:
         repository: ${{ github.repository }}
         ref: ${{ inputs.repo_branch }}
         fetch-depth: 0
+        submodules: false
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -120,9 +121,9 @@ jobs:
             [ "$OLD" = "/dev/null" ] && continue
             TGT="$OLD"
             if [[ "$TGT" =~ ^[ab]/ ]]; then
-              TGT="${TGT#*/}"                  # drop a/ or b/
+              TGT="${TGT#*/}"                
             else
-              TGT="${TGT#*/}"                  # drop first component e.g. "template-base/"
+              TGT="${TGT#*/}"                 
             fi
             mkdir -p "$(dirname "$TGT")"
             if [ ! -e "$TGT" ] && [ -f "$OLD" ]; then
