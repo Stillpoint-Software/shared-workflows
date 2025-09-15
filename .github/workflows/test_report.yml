@@ -1,49 +1,80 @@
-name: Test Report
+name: Test Report (reusable)
 
 on:
   workflow_call:
     inputs:
       test_run_id:
         description: "Run ID of the completed Test workflow"
-        required: false
+        required: true
         type: string
       branch:
-        description: "Branch Test was run on"
+        description: "Branch the tests ran on (optional)"
         required: false
-        type: string       
-        
+        type: string
+      sha:
+        description: "Exact commit tested (preferred for precise annotations)"
+        required: false
+        type: string
+
 permissions:
   contents: read
-  actions: read      
+  actions: read
   checks: write
 
 jobs:
   report:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code @ tested SHA
+      - name: Checkout @ tested commit (preferred)
+        if: ${{ inputs.sha != '' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+
+      - name: Checkout @ tested branch (fallback)
+        if: ${{ inputs.sha == '' && inputs.branch != '' }}
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 0
 
-      - name: ⬇️  Download ALL artifacts from Test run
-        if: ${{ inputs.test_run_id != '' }}        # manual runs only
+      - name: Checkout @ caller ref (last resort)
+        if: ${{ inputs.sha == '' && inputs.branch == '' }}
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: ⬇️ Download artifacts from Test run
         uses: actions/download-artifact@v4
         with:
-            repository:   ${{ github.repository }} 
-            run-id:       ${{ inputs.test_run_id }}
-            path:         .
-            github-token: ${{ secrets.GITHUB_TOKEN || github.token }}
-      
-      - uses: dorny/test-reporter@v1
+          repository:   ${{ github.repository }}
+          run-id:       ${{ inputs.test_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN || github.token }}
+          pattern:      test-results*      # ← matches the names uploaded above
+          merge-multiple: true
+          path:         artifacts
+
+      - name: List downloaded files
+        run: |
+          echo "Downloaded to ./artifacts"
+          find artifacts -type f -print || true
+
+      - name: 🧪 Test Report
+        id: report
+        uses: dorny/test-reporter@v2
         with:
-          artifact: /test-results-net[89]\.0/
           name: "Unit Tests (.NET 8 & 9)"
-          path: '**/*.trx'
+          path: "artifacts/**/*.trx"      # ← use local files we just downloaded
           reporter: dotnet-trx
           fail-on-error: false
           fail-on-empty: false
           list-suites: all
           list-tests: all
           max-annotations: 10
+          use-actions-summary: true
+
+      - name: Echo report links
+        run: |
+          echo "Check Run (API):  ${{ steps.report.outputs.url }}"
+          echo "Check Run (HTML): ${{ steps.report.outputs.url_html }}"

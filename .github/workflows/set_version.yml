@@ -35,9 +35,7 @@ on:
         type: string
         required: false
         default: "chore(nbgv): set version via CI"
-    secrets:
-      GH_TOKEN:
-        required: true
+
     outputs:
       new_simple:
         description: "Final SimpleVersion (after any auto-bump)"
@@ -59,8 +57,6 @@ permissions:
 jobs:
   set-version:
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}   # gh CLI auth
     outputs:
       new_simple:     ${{ steps.final.outputs.simple }}
       new_prerelease: ${{ steps.final.outputs.pre }}
@@ -72,7 +68,6 @@ jobs:
         with:
           ref: ${{ inputs.target_branch }}
           fetch-depth: 0
-          token: ${{ secrets.GH_TOKEN }}
 
       - name: Install nbgv
         run: dotnet tool update -g nbgv --version 3.8.38-alpha || dotnet tool install -g nbgv --version 3.8.38-alpha

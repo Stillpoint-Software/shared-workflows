@@ -1,0 +1,73 @@
+name: Unlist NuGet Package
+
+on:
+  workflow_call:
+    inputs:
+      package_id:
+        required: true
+        type: string
+      package_version:
+        required: true
+        type: string
+      dry_run:
+        type: boolean
+        default: false
+    secrets:
+      NUGET_API_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  unlist:
+    runs-on: ubuntu-latest
+    env:
+      PACKAGE_ID:   ${{ inputs.package_id }}
+      RAW_VERSION:  ${{ inputs.package_version }}
+      DRY_RUN:      ${{ inputs.dry_run }}
+      NUGET_SOURCE: https://api.nuget.org/v3/index.json
+
+    steps:
+      # 1️⃣ Normalise & validate, then expose as step *output*
+      - name: Normalise + validate version
+        id: semver
+        run: |
+          set -euo pipefail
+
+          raw="$RAW_VERSION"
+          [[ "$raw" =~ ^[vV] ]] && norm="${raw:1}" || norm="$raw"
+
+          pattern='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z\.-]+)?(\+[0-9A-Za-z\.-]+)?$'
+          if [[ ! "$norm" =~ $pattern ]]; then
+            echo "::error::'$raw' (normalised: '$norm') is not valid SemVer 2.0.0"
+            exit 1
+          fi
+
+          echo "version=$norm" >>"$GITHUB_OUTPUT"
+          echo "Normalised version: $norm"
+
+      # 2️⃣ Show the command and *stop the job* on dry-run
+      - name: Dry-run summary
+        if: ${{ env.DRY_RUN == 'true' }}
+        env:
+          NORMALISED_VERSION: ${{ steps.semver.outputs.version }}
+        run: |
+          echo "[DRY RUN] Would execute:"
+          echo "dotnet nuget delete \"$PACKAGE_ID\" \"$NORMALISED_VERSION\" --source \"$NUGET_SOURCE\" --api-key *** --non-interactive --force-english-output"
+
+      # 3️⃣ Only run when *not* a dry-run
+      - name: Unlist on nuget.org
+        if: ${{ env.DRY_RUN != 'true' }}
+        env:
+          NORMALISED_VERSION: ${{ steps.semver.outputs.version }}
+          NUGET_API_KEY:      ${{ secrets.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          echo "Unlisting ${PACKAGE_ID} ${NORMALISED_VERSION} ..."
+          dotnet nuget delete "$PACKAGE_ID" "$NORMALISED_VERSION" \
+            --source "$NUGET_SOURCE" \
+            --api-key "$NUGET_API_KEY" \
+            --non-interactive \
+            --force-english-output
+          echo "Successfully unlisted ${PACKAGE_ID} ${NORMALISED_VERSION}"
