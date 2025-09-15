@@ -34,7 +34,9 @@ jobs:
         python-version: '3.x'
 
     - name: Install dependencies
-      run: pip install cookiecutter jq
+      run: |
+        python -m pip install --upgrade pip
+        pip install cookiecutter jq
 
     - name: Read old template SHA
       id: old_sha
@@ -122,7 +124,6 @@ jobs:
         git commit -am "chore: merge template updates ${{ steps.old_sha.outputs.sha }} → ${{ steps.new_sha.outputs.sha }}"
         git push origin "$BRANCH"
 
-<<<<<<< Updated upstream
     - name: Create pull request
       if: env.SHA_CHANGED == 'true'
       env:
@@ -133,7 +134,3 @@ jobs:
           --body  "Updates cookiecutter.template_sha from ${{ steps.old_sha.outputs.sha }} to ${{ steps.new_sha.outputs.sha }}" \
           --base  '${{ inputs.repo_branch }}' \
           --head  "$BRANCH"
-<<<<<<< Updated upstream
-=======
->>>>>>> origin/main
->>>>>>> Stashed changes
