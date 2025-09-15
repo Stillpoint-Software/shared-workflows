@@ -102,19 +102,40 @@ jobs:
         if [ ! -s update.patch ]; then
           echo "ℹ️  No template diffs; only SHA bump will occur."
         else
-          # Pre-create needed directories
-          awk '/^\+\+\+ / { 
-            file = $2; 
-            gsub(/^b\//, "", file); 
-            if (match(file, /(.+)\//, arr)) { 
-              print arr[1] 
+          # 1) Pre-create target directories for NEW files (paths normalized for -p1)
+          awk '
+            /^\+\+\+ / {
+              f=$2
+              if (f == "/dev/null") next
+              # Normalize path for -p1:
+              if (f ~ /^[ab]\//) { sub(/^[ab]\//, "", f) }  # git-style (a/ or b/)
+              else { sub(/^[^/]+\//, "", f) }               # strip "template-new/" (or "template-base/")
+              if (match(f, /(.+)\//, m)) print m[1]
             }
-          }' update.patch | sort | uniq | xargs -r mkdir -p
+          ' update.patch | sort -u | xargs -r mkdir -p
 
-          if ! patch -p1 < update.patch; then
+          # 2) Seed missing files from template-base so patch has a base to modify
+          #    (If a file exists in template-base but not in the repo, copy it over.)
+          while IFS= read -r OLD; do
+            [ "$OLD" = "/dev/null" ] && continue
+            TGT="$OLD"
+            if [[ "$TGT" =~ ^[ab]/ ]]; then
+              TGT="${TGT#*/}"                  # drop a/ or b/
+            else
+              TGT="${TGT#*/}"                  # drop first component e.g. "template-base/"
+            fi
+            mkdir -p "$(dirname "$TGT")"
+            if [ ! -e "$TGT" ] && [ -f "$OLD" ]; then
+              cp -a "$OLD" "$TGT"
+            fi
+          done < <(awk '/^--- /{print $2}' update.patch)
+
+          # 3) Apply patch non-interactively; fail on conflicts
+          if ! patch --batch -p1 < update.patch; then
             echo "::error ::Patch could not be applied; possible conflict or missing files."
             exit 1
           fi
+
           git add -A
           echo "✅ Applied template changes"
         fi
