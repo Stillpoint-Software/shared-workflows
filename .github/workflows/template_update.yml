@@ -78,7 +78,6 @@ jobs:
       run: |
         rm -rf ~/.cookiecutters/*
         mkdir -p template-base
-        # jq '.cookiecutter.templates = "main"' .cookiecutter.json > tmp && mv tmp .cookiecutter.json   # <-- uncomment if keeping the variable
         cookiecutter base-template \
           --replay-file .cookiecutter.json \
           --overwrite-if-exists \
@@ -89,7 +88,6 @@ jobs:
       run: |
         rm -rf ~/.cookiecutters/*
         mkdir -p template-new
-        # jq '.cookiecutter.templates = "main"' .cookiecutter.json > tmp && mv tmp .cookiecutter.json   # <-- same note
         cookiecutter template-source \
           --replay-file .cookiecutter.json \
           --overwrite-if-exists \
@@ -104,10 +102,11 @@ jobs:
         if [ ! -s update.patch ]; then
           echo "ℹ️  No template diffs; only SHA bump will occur."
         else
-          if ! git apply --index --3way update.patch; then
+          if ! git apply --3way update.patch; then
             echo "::error ::Merge conflicts detected; aborting."
             exit 1
           fi
+          git add -A
           echo "✅ Applied template changes"
         fi
 
