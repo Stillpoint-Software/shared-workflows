@@ -1,14 +1,14 @@
-name: Template Update                      
+name: Template Update
 
 on:
   workflow_call:
     inputs:
       template_repo:
-        description: 'URL of the Cookiecutter template repo'
+        description: 'HTTPS URL or owner/repo of the Cookiecutter template (e.g., https://github.com/your-org/Project.Cookiecutter or your-org/Project.Cookiecutter)'
         required: true
         type: string
       repo_branch:
-        description: 'Branch of the project repo to update'
+        description: 'Branch of the caller repo to update (e.g., main)'
         required: true
         type: string
 
@@ -17,11 +17,14 @@ permissions:
   pull-requests: write
 
 jobs:
-  template-update:
+  update:
+    name: Update from Cookiecutter Template
     runs-on: ubuntu-latest
+    env:
+      TEMPLATE_TOKEN: ${{ secrets.TEMPLATE_REPO_TOKEN != '' && secrets.TEMPLATE_REPO_TOKEN || github.token }}
 
     steps:
-      - name: Checkout project repo
+      - name: Checkout caller repository
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.repo_branch }}
@@ -32,15 +35,21 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install Cookiecutter
+      - name: Install Cookiecutter (and jq if missing)
         shell: bash
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
-          pip install cookiecutter
+          pip install "cookiecutter==2.6.0"
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y jq
+          fi
 
       - name: Verify tools
         shell: bash
         run: |
+          set -euo pipefail
           cookiecutter --version
           jq --version
           git --version
@@ -62,20 +71,46 @@ jobs:
           echo "sha=$OLD_SHA" >> "$GITHUB_OUTPUT"
           echo "Detected OLD template sha: $OLD_SHA"
 
-      - name: Discover NEW template SHA from template HEAD
-        id: new_sha
+      - name: Parse template repo slug
+        id: repo
         shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Use token header so private repos work (HTTPS URLs recommended)
-          AUTH="AUTHORIZATION: bearer $GITHUB_TOKEN"
-          NEW_SHA="$(git -c http.extraheader="$AUTH" ls-remote '${{ inputs.template_repo }}' HEAD | awk '{print $1}')"
-          if [ -z "$NEW_SHA" ]; then
-            echo "::error ::Unable to resolve HEAD SHA from ${{ inputs.template_repo }}"
+          INPUT="${{ inputs.template_repo }}"
+          if [[ "$INPUT" =~ ^https?://github\.com/ ]]; then
+            # Extract owner/repo from URL (strip optional .git)
+            SLUG="$(echo "$INPUT" | sed -E 's#^https?://github\.com/([^/]+/[^/]+)(\.git)?$#\1#')"
+          else
+            SLUG="$INPUT"
+          fi
+          if [[ ! "$SLUG" =~ ^[^/]+/[^/]+$ ]]; then
+            echo "::error ::Unable to parse owner/repo from '${{ inputs.template_repo }}'"
             exit 1
           fi
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+          echo "Template repo slug: $SLUG"
+
+      - name: Checkout template at OLD SHA (base-template)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.repo.outputs.slug }}
+          ref: ${{ steps.old_sha.outputs.sha }}
+          token: ${{ env.TEMPLATE_TOKEN }}
+          path: base-template
+
+      - name: Checkout template at default branch HEAD (new-template)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.repo.outputs.slug }}
+          token: ${{ env.TEMPLATE_TOKEN }}
+          path: new-template
+
+      - name: Discover NEW template SHA from new-template HEAD
+        id: new_sha
+        shell: bash
+        run: |
+          set -euo pipefail
+          NEW_SHA="$(git -C new-template rev-parse HEAD)"
           echo "sha=$NEW_SHA" >> "$GITHUB_OUTPUT"
           echo "Discovered NEW template sha: $NEW_SHA"
 
@@ -93,30 +128,6 @@ jobs:
       - name: Exit early if SHA unchanged
         if: env.SHA_CHANGED == 'false'
         run: echo "Nothing to do."
-
-      - name: Clone template at OLD SHA
-        if: env.SHA_CHANGED == 'true'
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          AUTH="AUTHORIZATION: bearer $GITHUB_TOKEN"
-          git -c http.extraheader="$AUTH" clone '${{ inputs.template_repo }}' base-template
-          git -C base-template checkout '${{ steps.old_sha.outputs.sha }}'
-          git -C base-template rev-parse --short HEAD
-
-      - name: Clone template at NEW SHA
-        if: env.SHA_CHANGED == 'true'
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          AUTH="AUTHORIZATION: bearer $GITHUB_TOKEN"
-          git -c http.extraheader="$AUTH" clone '${{ inputs.template_repo }}' new-template
-          git -C new-template checkout '${{ steps.new_sha.outputs.sha }}'
-          git -C new-template rev-parse --short HEAD
 
       - name: Extract cookiecutter extra context
         if: env.SHA_CHANGED == 'true'
@@ -165,13 +176,11 @@ jobs:
           mkdir -p template-new
           mv "${GEN[0]}"/* template-new/
 
-  
       - name: Build update patch
         if: env.SHA_CHANGED == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          # Reduce EOL/whitespace surprises
           git config core.autocrlf false
           git config apply.whitespace nowarn
 
@@ -205,8 +214,6 @@ jobs:
             fi
           fi
           echo "::endgroup::"
-
-          # Stage whatever was applied
           git add -A
 
       - name: Bump cookiecutter.template_sha
@@ -255,7 +262,6 @@ jobs:
           - New template SHA: \`${{ steps.new_sha.outputs.sha }}\`
 
           If apply mode was 'rejects', download the 'template-update-rejects' artifact to resolve \`.rej\` files, then push fixes to this branch."
-
           gh pr create \
             --title "chore: merge template updates ${{ steps.old_sha.outputs.sha }} → ${{ steps.new_sha.outputs.sha }}" \
             --body  "$BODY" \
