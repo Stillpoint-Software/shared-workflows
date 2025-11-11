@@ -10,3 +10,5 @@ jobs:
       - name: Create Issue Branch
         id: Create_Issue_Branch
         uses: robvanderleek/create-issue-branch@main
+        env:
+          GITHUB_TOKEN: ${{ github.token }} 

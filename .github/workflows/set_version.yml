@@ -70,7 +70,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install nbgv
-        run: dotnet tool update -g nbgv --version 3.8.38-alpha || dotnet tool install -g nbgv --version 3.8.38-alpha
+        run: dotnet tool install -g nbgv --version 3.9.50
 
       - name: Read current version
         id: cur
