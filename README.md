@@ -3,6 +3,11 @@
 This repository contains reusable **GitHub Actions workflows** for .NET projects.  
 Update once here → use everywhere.
 
+**NOTE:** If the **Main** repo has restrictions that a pull request is required to 
+update branch, then the **Create Release** workflow will fail.  
+
+You will need to use the **Create Release** workflow on the *develop* branch and then create a pull request to main.
+
 ---
 
 ## 📑 Table of Contents
@@ -154,9 +159,6 @@ jobs:
 ### 6. 🏷️ Prepare Release (draft + changelog)
 Creates/updates a **draft** GitHub Release for the provided tag.  
 Builds notes from `CHANGELOG.md` (falls back to commit list + compare link).
-
-NOTE: If the repo has restrictsions that a pull request is required to update branch, then this workflow will fail.  
-You will need to use the "Create Release" workflow on the develop branch and then create a pull request to main.
 
 **Reusable:** `.github/workflows/prepare_release.yml`  
 **Inputs:** `target_branch`, `tag`, optional `prerelease`, `draft` (default true)
