@@ -64,7 +64,7 @@ jobs:
         id: report
         uses: dorny/test-reporter@v2
         with:
-          name: "Unit Tests (.NET 8 & 9)"
+          name: "Unit Tests (.NET 8 & 10)"
           path: "artifacts/**/*.trx"      # ← use local files we just downloaded
           reporter: dotnet-trx
           fail-on-error: false
