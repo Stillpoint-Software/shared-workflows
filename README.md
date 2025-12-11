@@ -49,7 +49,7 @@ jobs:
   format:
     uses: Github Organization Name/shared-workflows/.github/workflows/format.yml@main
     with:
-      dotnet_version: "9.0.x"
+      dotnet_version: "10.0.x"
     secrets:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -75,7 +75,7 @@ jobs:
   test:
     uses: Github Organization Name/shared-workflows/.github/workflows/run_tests.yml@main
     with:
-      dotnet_version: "9.0.x"
+      dotnet_version: "10.0.x"
       solution_name: ${{ vars.SOLUTION_NAME }}
     secrets:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
