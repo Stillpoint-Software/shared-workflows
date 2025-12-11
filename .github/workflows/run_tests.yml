@@ -39,7 +39,7 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: |
-            9.0.x
+            10.0.x
             8.0.x
 
       - name: Restore Dependencies
@@ -74,21 +74,21 @@ jobs:
             exit 1
           fi
 
-      - name: Ensure .NET 9.0 Results Exist
+      - name: Ensure .NET 10.0 Results Exist
         run: |
-          mkdir -p ./TestResults/net9.0
-          if ! compgen -G "./TestResults/net9.0/*.trx" > /dev/null; then
-            echo "⚠️ No .NET 9.0 test results" > ./TestResults/net9.0/placeholder.txt
+          mkdir -p ./TestResults/net10.0
+          if ! compgen -G "./TestResults/net10.0/*.trx" > /dev/null; then
+            echo "⚠️ No .NET 10.0 test results" > ./TestResults/net10.0/placeholder.txt
           fi
 
-      - name: Upload .NET 9.0 Test Results
+      - name: Upload .NET 10.0 Test Results
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-net9.0
+          name: test-results-net10.0
           # only upload trx + placeholder, ignore everything else
           path: |
-            ./TestResults/net9.0/*.trx
-            ./TestResults/net9.0/placeholder.txt
+            ./TestResults/net10.0/*.trx
+            ./TestResults/net10.0/placeholder.txt
           overwrite: true
 
       - name: Ensure .NET 8.0 Results Exist
