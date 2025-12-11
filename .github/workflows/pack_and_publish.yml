@@ -14,7 +14,7 @@ on:
 
 env:
   SOLUTION_NAME: ${{ vars.SOLUTION_NAME }}
-  DOTNET_VERSION: '9.0.x'
+  DOTNET_VERSION: '10.0.x'
   NUGET_SOURCE: 'https://api.nuget.org/v3/index.json'
 
 jobs:
@@ -33,7 +33,7 @@ jobs:
         id: nbgv
         uses: dotnet/nbgv@v0.4.2
         with:
-          toolVersion: 3.8.38-alpha
+          toolVersion: 3.9.50
 
       - name: Validate SOLUTION_NAME
         id: sln
