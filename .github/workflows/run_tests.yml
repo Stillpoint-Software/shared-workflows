@@ -40,6 +40,7 @@ jobs:
         with:
           dotnet-version: |
             10.0.x
+            9.0.x
             8.0.x
 
       - name: Restore Dependencies
@@ -52,13 +53,20 @@ jobs:
         run: |
           mkdir -p TestResults
           found=false
+
+          tfm_file="./TestResults/_tfms.txt"
+          : > "$tfm_file"
+
           for proj in $(find . -name "*.Tests.csproj"); do
             found=true
             frameworks=$(grep -oPm1 "(?<=<TargetFrameworks>)[^<]+" "$proj" || true)
             if [ -z "$frameworks" ]; then
               frameworks=$(grep -oPm1 "(?<=<TargetFramework>)[^<]+" "$proj" || true)
             fi
+
             for fw in $(echo $frameworks | tr ';' ' '); do
+              echo "$fw" >> "$tfm_file"
+
               results_dir="./TestResults/$fw"
               mkdir -p "$results_dir"
               dotnet test "$proj" \
@@ -69,26 +77,41 @@ jobs:
                 --results-directory "$results_dir"
             done
           done
+
           if [ "$found" = false ]; then
             echo "⚠️ No test projects (*.Tests.csproj) were found."
             exit 1
           fi
 
-      - name: Ensure .NET 10.0 Results Exist
-        run: |
-          mkdir -p ./TestResults/net10.0
-          if ! compgen -G "./TestResults/net10.0/*.trx" > /dev/null; then
-            echo "⚠️ No .NET 10.0 test results" > ./TestResults/net10.0/placeholder.txt
+          sort -u "$tfm_file" -o "$tfm_file"
+          echo "Detected TFMs:"
+          cat "$tfm_file"
+
+          if grep -qx "net10.0" "$tfm_file"; then
+            echo "PRIMARY_TFM=net10.0" >> $GITHUB_ENV
+          elif grep -qx "net9.0" "$tfm_file"; then
+            echo "PRIMARY_TFM=net9.0" >> $GITHUB_ENV
+          else
+            echo "PRIMARY_TFM=" >> $GITHUB_ENV
           fi
 
-      - name: Upload .NET 10.0 Test Results
+      - name: Ensure PRIMARY Results Exist
+        if: ${{ env.PRIMARY_TFM != '' }}
+        run: |
+          mkdir -p "./TestResults/${{ env.PRIMARY_TFM }}"
+          if ! compgen -G "./TestResults/${{ env.PRIMARY_TFM }}/*.trx" > /dev/null; then
+            echo "⚠️ No ${{ env.PRIMARY_TFM }} test results" > "./TestResults/${{ env.PRIMARY_TFM }}/placeholder.txt"
+          fi
+
+      - name: Upload PRIMARY Test Results
+        if: ${{ env.PRIMARY_TFM != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-net10.0
+          name: test-results-${{ env.PRIMARY_TFM }}
           # only upload trx + placeholder, ignore everything else
           path: |
-            ./TestResults/net10.0/*.trx
-            ./TestResults/net10.0/placeholder.txt
+            ./TestResults/${{ env.PRIMARY_TFM }}/*.trx
+            ./TestResults/${{ env.PRIMARY_TFM }}/placeholder.txt
           overwrite: true
 
       - name: Ensure .NET 8.0 Results Exist
