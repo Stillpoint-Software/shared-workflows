@@ -73,37 +73,39 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
+      
           sln="${{ env.SOLUTION_NAME }}"
           tfm="${{ matrix.tfm }}"
           mkdir -p "TestResults/$tfm"
-
-          # Get only test projects from the solution (fast)
+      
+          # Get only test projects from the solution (must live in test/)
           mapfile -t test_projects < <(
-            dotnet slnx "$slnx" list | sed '1,2d' | sed '/^\s*$/d' | grep -E '\.Tests\.csproj$' || true
+            dotnet slnx "$sln" list \
+              | sed '1,2d' \
+              | sed '/^\s*$/d' \
+              | grep -E '^(test[\\/]).*\.csproj$' \
+              || true
           )
-
+      
           if [[ "${#test_projects[@]}" -eq 0 ]]; then
-            echo "❌ No test projects (*.Tests.csproj) found in solution."
+            echo "❌ No test projects found in solution under test/."
             exit 1
           fi
-
+      
           ran_any=false
-
           for proj in "${test_projects[@]}"; do
-            # Determine TargetFrameworks
             frameworks=$(grep -oPm1 "(?<=<TargetFrameworks>)[^<]+" "$proj" || true)
             if [[ -z "$frameworks" ]]; then
               frameworks=$(grep -oPm1 "(?<=<TargetFramework>)[^<]+" "$proj" || true)
             fi
-
+      
             if ! echo "$frameworks" | tr ';' '\n' | grep -qx "$tfm"; then
               continue
             fi
-
+      
             ran_any=true
             name="$(basename "$proj" .csproj)"
-
+      
             dotnet test "$proj" \
               --no-restore \
               --configuration "$BUILD_CONFIGURATION" \
@@ -111,19 +113,49 @@ jobs:
               --logger "trx;LogFileName=${name}-${tfm}.trx" \
               --results-directory "TestResults/$tfm"
           done
-
+      
           if [[ "$ran_any" == "false" ]]; then
-            echo "⚠️ No solution test projects target $tfm."
-            echo "No $tfm test results (no solution test projects target $tfm)" > "TestResults/$tfm/placeholder.txt"
+            echo "⚠️ No solution test projects under test/ target $tfm."
+            echo "No $tfm test results" > "TestResults/$tfm/placeholder.txt"
             exit 1
           fi
-
-      - name: Upload ${{ matrix.tfm }} Test Results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-${{ matrix.tfm }}
-          path: |
-            TestResults/${{ matrix.tfm }}/*.trx
-            TestResults/${{ matrix.tfm }}/placeholder.txt
-          overwrite: true
+      
+                ran_any=false
+      
+                for proj in "${test_projects[@]}"; do
+                  # Determine TargetFrameworks
+                  frameworks=$(grep -oPm1 "(?<=<TargetFrameworks>)[^<]+" "$proj" || true)
+                  if [[ -z "$frameworks" ]]; then
+                    frameworks=$(grep -oPm1 "(?<=<TargetFramework>)[^<]+" "$proj" || true)
+                  fi
+      
+                  if ! echo "$frameworks" | tr ';' '\n' | grep -qx "$tfm"; then
+                    continue
+                  fi
+      
+                  ran_any=true
+                  name="$(basename "$proj" .csproj)"
+      
+                  dotnet test "$proj" \
+                    --no-restore \
+                    --configuration "$BUILD_CONFIGURATION" \
+                    --framework "$tfm" \
+                    --logger "trx;LogFileName=${name}-${tfm}.trx" \
+                    --results-directory "TestResults/$tfm"
+                done
+      
+                if [[ "$ran_any" == "false" ]]; then
+                  echo "⚠️ No solution test projects target $tfm."
+                  echo "No $tfm test results (no solution test projects target $tfm)" > "TestResults/$tfm/placeholder.txt"
+                  exit 1
+                fi
+      
+            - name: Upload ${{ matrix.tfm }} Test Results
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                name: test-results-${{ matrix.tfm }}
+                path: |
+                  TestResults/${{ matrix.tfm }}/*.trx
+                  TestResults/${{ matrix.tfm }}/placeholder.txt
+                overwrite: true
