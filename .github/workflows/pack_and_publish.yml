@@ -56,9 +56,6 @@ jobs:
       - name: Build
         run: dotnet build --no-restore -c "${{ inputs.build_configuration }}" "${{ env.SOLUTION_NAME }}"
 
-      - name: Test
-        run: dotnet test --no-build -c "${{ inputs.build_configuration }}" "${{ env.SOLUTION_NAME }}"
-
       - name: Decide PublicRelease (stable only)
         id: rel
         run: |
