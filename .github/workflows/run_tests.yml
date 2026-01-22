@@ -52,6 +52,8 @@ jobs:
         run: dotnet build ${{ inputs.solution_name }} --no-restore -c ${{ steps.config.outputs.configuration }}
 
       - name: Test (${{ matrix.framework }})
+        env:
+          DOTNET_ROLL_FORWARD: Disable
         run: |
           shopt -s globstar
           mkdir -p ./TestResults
