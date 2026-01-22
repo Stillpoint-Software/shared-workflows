@@ -1,4 +1,4 @@
-name: Run Tests
+name: Test
 
 on:
   workflow_call:
@@ -8,7 +8,7 @@ on:
         type: string
         required: true
       solution_name:
-        description: "Solution file (.slnx)"
+        description: "Solution file to build and test"
         required: true
         type: string
 
@@ -16,28 +16,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - tfm: net8.0
-            sdk: 8.0.x
-          - tfm: net9.0
-            sdk: 9.0.x
-          - tfm: net10.0
-            sdk: 10.0.x
-
     env:
       SOLUTION_NAME: ${{ inputs.solution_name }}
-      BRANCH_NAME: ${{ inputs.branch }}
+      BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
 
     steps:
       - name: Set Build Configuration (Release if main)
-        shell: bash
         run: |
-          set -euo pipefail
-          b="${{ env.BRANCH_NAME }}"
-          if [[ "$b" == "main" || "$b" == "refs/heads/main" || "$b" == */main ]]; then
+          if [ "${{ env.BRANCH_NAME }}" = "main" ]; then
             echo "BUILD_CONFIGURATION=Release" >> $GITHUB_ENV
           else
             echo "BUILD_CONFIGURATION=Debug" >> $GITHUB_ENV
@@ -49,62 +35,128 @@ jobs:
           ref: ${{ inputs.branch }}
           fetch-depth: 0
 
-      - name: Setup .NET SDKs 
+      - name: Setup .NET SDKs
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: |
-            ${{ matrix.sdk }}
             10.0.x
+            9.0.x
+            8.0.x
 
-      - name: Restore
-        run: dotnet restore "${{ env.SOLUTION_NAME }}"
+      - name: Restore Dependencies
+        run: dotnet restore ${{ env.SOLUTION_NAME }}
 
-      - name: Run tests in test/ for ${{ matrix.tfm }} on branch ${{inputs.branch}}
-        shell: bash
+      - name: Build
+        run: dotnet build --no-restore --configuration $BUILD_CONFIGURATION ${{ env.SOLUTION_NAME }}
+
+      - name: Run Tests
         run: |
-          set -euo pipefail
-      
-          tfm="${{ matrix.tfm }}"
-          mkdir -p "TestResults/$tfm"
-      
-          ran_any=false
-      
-          while IFS= read -r proj; do
-            name="$(basename "$proj" .csproj)"
-            log="TestResults/$tfm/${name}-${tfm}.log"
-      
-            echo "=== dotnet test $proj ($tfm) ==="
-      
-            # ✅ NEW: remove prior outputs to avoid cross-TFM bleed
-            rm -rf "$(dirname "$proj")/bin" "$(dirname "$proj")/obj"
-      
-            set +e
-            dotnet test "$proj" \
-              --configuration "$BUILD_CONFIGURATION" \
-              --framework "$tfm" \
-              --logger "trx;LogFileName=${name}-${tfm}.trx" \
-              --results-directory "TestResults/$tfm" \
-              2>&1 | tee "$log"
-            status=${PIPESTATUS[0]}
-            set -e
-      
-            if [[ $status -eq 0 ]]; then
-              ran_any=true
-              continue
+          mkdir -p TestResults
+          found=false
+
+          tfm_file="./TestResults/_tfms.txt"
+          : > "$tfm_file"
+
+          for proj in $(find . -name "*.Tests.csproj"); do
+            found=true
+            frameworks=$(grep -oPm1 "(?<=<TargetFrameworks>)[^<]+" "$proj" || true)
+            if [ -z "$frameworks" ]; then
+              frameworks=$(grep -oPm1 "(?<=<TargetFramework>)[^<]+" "$proj" || true)
             fi
-      
-            # If project doesn't target this TFM, skip it
-            if grep -qiE "does not support|not supported|not a valid.*framework|The framework '.*' was not found" "$log"; then
-              echo "↪️ Skipping $proj (doesn't target $tfm)"
-              continue
-            fi
-      
-            echo "❌ Tests failed for $proj on $tfm"
-            exit $status
-          done < <(find test -name "*.csproj" -print | grep -vi "Benchmark")
-      
-          if [[ "$ran_any" == "false" ]]; then
-            echo "⚠️ No test projects ran for $tfm (none target it)."
-            echo "No $tfm test results" > "TestResults/$tfm/placeholder.txt"
+
+            for fw in $(echo $frameworks | tr ';' ' '); do
+              echo "$fw" >> "$tfm_file"
+
+              results_dir="./TestResults/$fw"
+              mkdir -p "$results_dir"
+              dotnet test "$proj" \
+                --no-build \
+                --configuration $BUILD_CONFIGURATION \
+                --framework $fw \
+                --logger "trx;LogFileName=$(basename $proj)-$fw.trx" \
+                --results-directory "$results_dir"
+            done
+          done
+
+          if [ "$found" = false ]; then
+            echo "⚠️ No test projects (*.Tests.csproj) were found."
             exit 1
           fi
+
+          sort -u "$tfm_file" -o "$tfm_file"
+          echo "Detected TFMs:"
+          cat "$tfm_file"
+
+          if grep -qx "net10.0" "$tfm_file"; then
+            echo "PRIMARY_TFM=net10.0" >> $GITHUB_ENV
+          elif grep -qx "net9.0" "$tfm_file"; then
+            echo "PRIMARY_TFM=net9.0" >> $GITHUB_ENV
+          else
+            echo "PRIMARY_TFM=" >> $GITHUB_ENV
+          fi
+
+      - name: Ensure PRIMARY Results Exist
+        if: $PRIMARY_TFM != '' 
+        run: |
+          mkdir -p "./TestResults/$PRIMARY_TFM"
+          if ! compgen -G "./TestResults/$PRIMARY_TFM/*.trx" > /dev/null; then
+            echo "⚠️ No $PRIMARY_TFM test results" > "./TestResults/$PRIMARY_TFM/placeholder.txt"
+          fi
+
+      - name: Upload PRIMARY Test Results
+        if: $PRIMARY_TFM != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-$PRIMARY_TFM
+          # only upload trx + placeholder, ignore everything else
+          path: |
+            ./TestResults/$PRIMARY_TFM/*.trx
+            ./TestResults/$PRIMARY_TFM/placeholder.txt
+          overwrite: true
+
+      - name: Ensure .NET 8.0 Results Exist
+        run: |
+          mkdir -p ./TestResults/net8.0
+          if ! compgen -G "./TestResults/net8.0/*.trx" > /dev/null; then
+            echo "⚠️ No .NET 8.0 test results" > ./TestResults/net8.0/placeholder.txt
+          fi
+
+      - name: Upload .NET 8.0 Test Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-net8.0
+          path: |
+            ./TestResults/net8.0/*.trx
+            ./TestResults/net8.0/placeholder.txt
+          overwrite: true
+          
+      - name: Ensure .NET 9.0 Results Exist
+        run: |
+          mkdir -p ./TestResults/net9.0
+          if ! compgen -G "./TestResults/net9.0/*.trx" > /dev/null; then
+            echo "⚠️ No .NET 9.0 test results" > ./TestResults/net9.0/placeholder.txt
+          fi
+
+      - name: Upload .NET 9.0 Test Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-net9.0
+          path: |
+            ./TestResults/net9.0/*.trx
+            ./TestResults/net9.0/placeholder.txt
+
+      - name: Ensure .NET 10.0 Results Exist
+        run: |
+            mkdir -p ./TestResults/net10.0
+            if ! compgen -G "./TestResults/net10.0/*.trx" > /dev/null; then
+              echo "⚠️ No .NET 10.0 test results" > ./TestResults/net10.0/placeholder.txt
+            fi
+  
+      - name: Upload .NET 10.0 Test Results
+        uses: actions/upload-artifact@v4
+        with:
+            name: test-results-net10.0
+            path: |
+              ./TestResults/net10.0/*.trx
+              ./TestResults/net10.0/placeholder.txt
+            overwrite: true
