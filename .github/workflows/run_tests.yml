@@ -69,7 +69,7 @@ jobs:
       - name: Restore (once)
         run: dotnet restore "${{ env.SOLUTION_NAME }}"
 
-      - name: Run solution test projects for ${{ matrix.tfm }}
+      - name: Run solution test projects for ${{ matrix.tfm }} in brand ${{inputs.branch}}
         shell: bash
         run: |
           set -euo pipefail
@@ -80,7 +80,7 @@ jobs:
       
           # Get only test projects from the solution (must live in test/)
           mapfile -t test_projects < <(
-            dotnet slnx "$sln" list \
+            dotnet sln "$sln" list \
               | sed '1,2d' \
               | sed '/^\s*$/d' \
               | grep -E '^(test[\\/]).*\.csproj$' \
