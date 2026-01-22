@@ -14,10 +14,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        framework: [net8.0, net9.0, net10.0]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -48,7 +44,7 @@ jobs:
       - name: Build
         run: dotnet build ${{ inputs.solution_name }} --no-restore -c ${{ steps.config.outputs.configuration }}
 
-      - name: Test (${{ matrix.framework }})
+      - name: Test
         run: |
           shopt -s globstar
           mkdir -p ./TestResults
@@ -57,12 +53,15 @@ jobs:
             [ -f "$proj" ] || continue
             found=true
             echo "Running tests for: $proj"
-            dotnet test "$proj" \
-              --no-build \
-              -c ${{ steps.config.outputs.configuration }} \
-              -f ${{ matrix.framework }} \
-              --logger "trx;LogFileName=$(basename "$proj" .csproj)-${{ matrix.framework }}.trx" \
-              --results-directory ./TestResults
+            for fw in net8.0 net9.0 net10.0; do
+              echo "  Framework: $fw"
+              dotnet test "$proj" \
+                --no-build \
+                -c ${{ steps.config.outputs.configuration }} \
+                -f "$fw" \
+                --logger "trx;LogFileName=$(basename "$proj" .csproj)-$fw.trx" \
+                --results-directory ./TestResults
+            done
           done
           if [ "$found" = false ]; then
             echo "::error::No test projects found matching test/**/*.Tests.csproj"
@@ -75,30 +74,6 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-results-${{ matrix.framework }}
-          path: ./TestResults/
-          if-no-files-found: warn
-
-  merge-results:
-    runs-on: ubuntu-latest
-    needs: test
-    if: always()
-    steps:
-      - name: Download All Test Results
-        uses: actions/download-artifact@v4
-        with:
-          pattern: test-results-*
-          path: ./TestResults
-          merge-multiple: true
-
-      - name: Upload Combined Results
-        uses: actions/upload-artifact@v4
-        with:
           name: test-results
           path: ./TestResults/
-          if-no-files-found: warn
-
-      - name: Cleanup Individual Artifacts
-        uses: geekyeggo/delete-artifact@v5
-        with:
-          name: test-results-*
+          if-no-files-found: error
