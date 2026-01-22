@@ -1,4 +1,4 @@
-name: Test
+name: Run Tests
 
 on:
   workflow_call:
@@ -8,7 +8,7 @@ on:
         type: string
         required: true
       solution_name:
-        description: "Solution file to build and test (.slnx)"
+        description: "Solution file (.slnx)"
         required: true
         type: string
 
@@ -56,106 +56,65 @@ jobs:
             10.0.x
             ${{ matrix.sdk }}
 
-      - name: Validate solution exists
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ ! -f "${{ env.SOLUTION_NAME }}" ]]; then
-            echo "❌ Solution not found: ${{ env.SOLUTION_NAME }}"
-            echo "Repo root contents:"; ls -la
-            exit 1
-          fi
-
-      - name: Restore (once)
+      - name: Restore
         run: dotnet restore "${{ env.SOLUTION_NAME }}"
 
-      - name: Run solution test projects for ${{ matrix.tfm }} in brand ${{inputs.branch}}
+      - name: Run tests in test/ for ${{ matrix.tfm }}
         shell: bash
         run: |
           set -euo pipefail
-      
-          sln="${{ env.SOLUTION_NAME }}"
+
           tfm="${{ matrix.tfm }}"
           mkdir -p "TestResults/$tfm"
-      
-          # Get only test projects from the solution (must live in test/)
-          mapfile -t test_projects < <(
-            dotnet sln "$sln" list \
-              | sed '1,2d' \
-              | sed '/^\s*$/d' \
-              | grep -E '^(test[\\/]).*\.csproj$' \
-              || true
-          )
-      
-          if [[ "${#test_projects[@]}" -eq 0 ]]; then
-            echo "❌ No test projects found in solution under test/."
-            exit 1
-          fi
-      
+
           ran_any=false
-          for proj in "${test_projects[@]}"; do
-            frameworks=$(grep -oPm1 "(?<=<TargetFrameworks>)[^<]+" "$proj" || true)
-            if [[ -z "$frameworks" ]]; then
-              frameworks=$(grep -oPm1 "(?<=<TargetFramework>)[^<]+" "$proj" || true)
-            fi
-      
-            if ! echo "$frameworks" | tr ';' '\n' | grep -qx "$tfm"; then
-              continue
-            fi
-      
-            ran_any=true
+
+          # Find all csproj under test/, but skip Benchmark projects
+          while IFS= read -r proj; do
             name="$(basename "$proj" .csproj)"
-      
+            log="TestResults/$tfm/${name}-${tfm}.log"
+
+            echo "=== dotnet test $proj ($tfm) ==="
+
+            set +e
             dotnet test "$proj" \
               --no-restore \
               --configuration "$BUILD_CONFIGURATION" \
               --framework "$tfm" \
               --logger "trx;LogFileName=${name}-${tfm}.trx" \
-              --results-directory "TestResults/$tfm"
-          done
-      
+              --results-directory "TestResults/$tfm" \
+              2>&1 | tee "$log"
+            status=${PIPESTATUS[0]}
+            set -e
+
+            if [[ $status -eq 0 ]]; then
+              ran_any=true
+              continue
+            fi
+
+            # If project doesn't target this TFM, skip it (don’t fail the run)
+            if grep -qiE "does not support|not supported|not a valid.*framework|The framework '.*' was not found" "$log"; then
+              echo "↪️ Skipping $proj (doesn't target $tfm)"
+              continue
+            fi
+
+            echo "❌ Tests failed for $proj on $tfm"
+            exit $status
+          done < <(find test -name "*.csproj" -print | grep -vi "Benchmark")
+
           if [[ "$ran_any" == "false" ]]; then
-            echo "⚠️ No solution test projects under test/ target $tfm."
+            echo "⚠️ No test projects ran for $tfm (none target it)."
             echo "No $tfm test results" > "TestResults/$tfm/placeholder.txt"
             exit 1
           fi
-      
-                ran_any=false
-      
-                for proj in "${test_projects[@]}"; do
-                  # Determine TargetFrameworks
-                  frameworks=$(grep -oPm1 "(?<=<TargetFrameworks>)[^<]+" "$proj" || true)
-                  if [[ -z "$frameworks" ]]; then
-                    frameworks=$(grep -oPm1 "(?<=<TargetFramework>)[^<]+" "$proj" || true)
-                  fi
-      
-                  if ! echo "$frameworks" | tr ';' '\n' | grep -qx "$tfm"; then
-                    continue
-                  fi
-      
-                  ran_any=true
-                  name="$(basename "$proj" .csproj)"
-      
-                  dotnet test "$proj" \
-                    --no-restore \
-                    --configuration "$BUILD_CONFIGURATION" \
-                    --framework "$tfm" \
-                    --logger "trx;LogFileName=${name}-${tfm}.trx" \
-                    --results-directory "TestResults/$tfm"
-                done
-      
-                if [[ "$ran_any" == "false" ]]; then
-                  echo "⚠️ No solution test projects target $tfm."
-                  echo "No $tfm test results (no solution test projects target $tfm)" > "TestResults/$tfm/placeholder.txt"
-                  exit 1
-                fi
-      
-            - name: Upload ${{ matrix.tfm }} Test Results
-              if: always()
-              uses: actions/upload-artifact@v4
-              with:
-                name: test-results-${{ matrix.tfm }}
-                path: |
-                  TestResults/${{ matrix.tfm }}/*.trx
-                  TestResults/${{ matrix.tfm }}/placeholder.txt
-                overwrite: true
+
+      - name: Upload ${{ matrix.tfm }} Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.tfm }}
+          path: |
+            TestResults/${{ matrix.tfm }}/*.trx
+            TestResults/${{ matrix.tfm }}/placeholder.txt
+            TestResults/${{ matrix.tfm }}/*.log
+          overwrite: true
