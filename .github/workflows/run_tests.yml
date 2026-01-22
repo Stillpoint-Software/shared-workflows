@@ -59,23 +59,25 @@ jobs:
       - name: Restore
         run: dotnet restore "${{ env.SOLUTION_NAME }}"
 
-      - name: Run tests in test/ for ${{ matrix.tfm }}
+      - name: Run tests in test/ for ${{ matrix.tfm }} on branch ${{inputs.branch}}
         shell: bash
         run: |
           set -euo pipefail
-
+      
           tfm="${{ matrix.tfm }}"
           mkdir -p "TestResults/$tfm"
-
+      
           ran_any=false
-
-          # Find all csproj under test/, but skip Benchmark projects
+      
           while IFS= read -r proj; do
             name="$(basename "$proj" .csproj)"
             log="TestResults/$tfm/${name}-${tfm}.log"
-
+      
             echo "=== dotnet test $proj ($tfm) ==="
-
+      
+            # ✅ NEW: remove prior outputs to avoid cross-TFM bleed
+            rm -rf "$(dirname "$proj")/bin" "$(dirname "$proj")/obj"
+      
             set +e
             dotnet test "$proj" \
               --no-restore \
@@ -86,35 +88,24 @@ jobs:
               2>&1 | tee "$log"
             status=${PIPESTATUS[0]}
             set -e
-
+      
             if [[ $status -eq 0 ]]; then
               ran_any=true
               continue
             fi
-
-            # If project doesn't target this TFM, skip it (don’t fail the run)
+      
+            # If project doesn't target this TFM, skip it
             if grep -qiE "does not support|not supported|not a valid.*framework|The framework '.*' was not found" "$log"; then
               echo "↪️ Skipping $proj (doesn't target $tfm)"
               continue
             fi
-
+      
             echo "❌ Tests failed for $proj on $tfm"
             exit $status
           done < <(find test -name "*.csproj" -print | grep -vi "Benchmark")
-
+      
           if [[ "$ran_any" == "false" ]]; then
             echo "⚠️ No test projects ran for $tfm (none target it)."
             echo "No $tfm test results" > "TestResults/$tfm/placeholder.txt"
             exit 1
           fi
-
-      - name: Upload ${{ matrix.tfm }} Test Results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-${{ matrix.tfm }}
-          path: |
-            TestResults/${{ matrix.tfm }}/*.trx
-            TestResults/${{ matrix.tfm }}/placeholder.txt
-            TestResults/${{ matrix.tfm }}/*.log
-          overwrite: true
