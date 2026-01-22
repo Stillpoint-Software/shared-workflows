@@ -80,7 +80,6 @@ jobs:
       
             set +e
             dotnet test "$proj" \
-              --no-restore \
               --configuration "$BUILD_CONFIGURATION" \
               --framework "$tfm" \
               --logger "trx;LogFileName=${name}-${tfm}.trx" \
