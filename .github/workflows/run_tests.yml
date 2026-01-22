@@ -53,7 +53,7 @@ jobs:
 
       - name: Test (${{ matrix.framework }})
         env:
-          DOTNET_ROLL_FORWARD: Disable
+          DOTNET_ROLL_FORWARD: LatestPatch
         run: |
           shopt -s globstar
           mkdir -p ./TestResults
