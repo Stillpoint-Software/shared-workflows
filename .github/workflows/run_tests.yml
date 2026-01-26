@@ -53,12 +53,20 @@ jobs:
 
       - name: Test (${{ matrix.framework }})
         run: |
-          shopt -s globstar
+          shopt -s globstar nullglob
           mkdir -p ./TestResults
-          found=false
-          for proj in test/**/*.Tests.csproj; do
-            [ -f "$proj" ] || continue
-            found=true
+
+          projects=(
+            test/**/*.Test*.csproj
+            tests/**/*.Test*.csproj
+          )
+
+          if [ ${#projects[@]} -eq 0 ]; then
+            echo "::error::No test projects found under test/** or tests/** matching **/*.Test*.csproj"
+            exit 1
+          fi
+
+          for proj in "${projects[@]}"; do
             echo "Running tests for: $proj"
             dotnet test "$proj" \
               --no-build \
@@ -67,10 +75,7 @@ jobs:
               --logger "trx;LogFileName=$(basename "$proj" .csproj)-${{ matrix.framework }}.trx" \
               --results-directory ./TestResults
           done
-          if [ "$found" = false ]; then
-            echo "::error::No test projects found matching test/**/*.Tests.csproj"
-            exit 1
-          fi
+
           echo "Test results:"
           ls -la ./TestResults/
 
