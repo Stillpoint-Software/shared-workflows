@@ -160,7 +160,7 @@ jobs:
 
     - name: Create pull request
       env:
-        GITHUB_TOKEN: ${{ secrets.token }}
+        GITHUB_TOKEN: ${{ secrets.token || github.token }}
       run: |
         OLD_SHA="${{ needs.check-update.outputs.old_sha }}"
         NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
