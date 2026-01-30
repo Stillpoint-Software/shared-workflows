@@ -71,7 +71,7 @@ jobs:
         if: env.SHA_CHANGED == 'false'
         run: echo "✂️  SHA unchanged; nothing to update."
 
-      - name: Render templates + apply patch (temp work OUTSIDE repo) + commit branch
+            - name: Render templates + apply patch (temp work OUTSIDE repo) + commit branch
         if: env.SHA_CHANGED == 'true'
         shell: bash
         run: |
@@ -108,38 +108,28 @@ jobs:
             --overwrite-if-exists \
             --output-dir "$OUT_NEW"
 
-          echo "Diffing renders..."
-          diff -ruN "$OUT_BASE" "$OUT_NEW" > "$PATCHFILE" || true
+          echo "Diffing renders (git-style patch, relative paths)..."
+          BASE_ROOT="$(find "$OUT_BASE" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -1)"
+          NEW_ROOT="$(find "$OUT_NEW"  -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -1)"
+
+          if [ -z "$BASE_ROOT" ] || [ -z "$NEW_ROOT" ] || [ "$BASE_ROOT" != "$NEW_ROOT" ]; then
+            echo "::error ::Rendered root folder mismatch: base='$BASE_ROOT' new='$NEW_ROOT'"
+            exit 1
+          fi
+
+          (
+            cd "$WORKDIR"
+            git diff --no-index --binary \
+              "template-base/$BASE_ROOT" \
+              "template-new/$NEW_ROOT" \
+              > "$PATCHFILE" || true
+          )
 
           if [ ! -s "$PATCHFILE" ]; then
             echo "ℹ️  No template diffs; only SHA bump will occur."
           else
-            echo "Pre-creating dirs for new files..."
-            awk '
-              /^\+\+\+ / {
-                f=$2
-                if (f == "/dev/null") next
-                # remove leading directory (template-new/ or template-base/)
-                sub(/^[^/]+\//, "", f)
-                if (match(f, /(.+)\//, m)) print m[1]
-              }
-            ' "$PATCHFILE" | sort -u | xargs -r mkdir -p
-
-            echo "Seeding missing base files so patch can modify them..."
-            awk '/^--- /{print $2}' "$PATCHFILE" | while read -r OLD; do
-              [ "$OLD" = "/dev/null" ] && continue
-              # strip leading dir from diff path
-              REL="${OLD#*/}"
-              SRC="$OUT_BASE/${REL}"
-              TGT="${REL}"
-              mkdir -p "$(dirname "$TGT")"
-              if [ ! -e "$TGT" ] && [ -f "$SRC" ]; then
-                cp -a "$SRC" "$TGT"
-              fi
-            done
-
-            echo "Applying patch..."
-            patch --batch -p1 < "$PATCHFILE"
+            git apply --check -p3 "$PATCHFILE"
+            git apply -p3 "$PATCHFILE"
             echo "✅ Applied template changes"
           fi
 
@@ -147,7 +137,7 @@ jobs:
           jq ".cookiecutter.template_sha = \"${{ steps.new_sha.outputs.sha }}\"" \
             .cookiecutter.json > tmp && mv tmp .cookiecutter.json
 
-          BRANCH="template-update-${{ steps.new_sha.outputs.sha }}"
+          BRANCH="template-update-${{ inputs.repo_branch }}-${{ steps.new_sha.outputs.sha }}"
           echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git checkout -b "$BRANCH"
