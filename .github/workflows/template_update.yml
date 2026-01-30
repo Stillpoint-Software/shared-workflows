@@ -110,41 +110,41 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-
+        
         RENDERED="/tmp/rendered/${{ steps.rendered_dir.outputs.name }}"
         OLD_SHA="${{ needs.check-update.outputs.old_sha }}"
         NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
         BRANCH="template-update-${NEW_SHA}"
-
+        
         git config user.name "GitHub Actions Bot"
         git config user.email "actions@github.com"
-
+        
         # Save current branch name
         CURRENT_BRANCH="${{ inputs.repo_branch }}"
-
+        
         # Create an orphan branch with the rendered template content
         git checkout --orphan template-rendered
         git rm -rf --cached .
         rm -rf $(ls -A | grep -v '^\.git$')
-
+        
         # Copy rendered content
         cp -r "$RENDERED"/. .
-
+        
         # Preserve .cookiecutter.json from original branch with updated SHA
         git show "${CURRENT_BRANCH}:.cookiecutter.json" > .cookiecutter.json
         jq ".cookiecutter.template_sha = \"${NEW_SHA}\"" \
           .cookiecutter.json > tmp.json && mv tmp.json .cookiecutter.json
-
+        
         git add -A
         git commit -m "Template render at ${NEW_SHA}"
-
+        
         # Save the commit SHA of template-rendered
         TEMPLATE_COMMIT=$(git rev-parse HEAD)
-
+        
         # Switch back to repo branch and create update branch
         git checkout "${CURRENT_BRANCH}"
         git checkout -b "$BRANCH"
-
+        
         # Merge using the commit SHA instead of branch name
         if git merge "$TEMPLATE_COMMIT" --allow-unrelated-histories --no-edit -m "chore: update from template ${OLD_SHA} → ${NEW_SHA}"; then
           echo "merge_had_conflicts=false" >> "$GITHUB_OUTPUT"
@@ -154,7 +154,7 @@ jobs:
           git add -A
           git commit -m "chore: update from template ${OLD_SHA} → ${NEW_SHA} (with conflicts)"
         fi
-
+        
         git push origin "$BRANCH"
         echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 
