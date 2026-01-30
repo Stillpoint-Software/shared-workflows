@@ -119,6 +119,9 @@ jobs:
         git config user.name "GitHub Actions Bot"
         git config user.email "actions@github.com"
 
+        # Save current branch name
+        CURRENT_BRANCH="${{ inputs.repo_branch }}"
+
         # Create an orphan branch with the rendered template content
         git checkout --orphan template-rendered
         git rm -rf --cached .
@@ -128,19 +131,22 @@ jobs:
         cp -r "$RENDERED"/. .
 
         # Preserve .cookiecutter.json from original branch with updated SHA
-        git checkout '${{ inputs.repo_branch }}' -- .cookiecutter.json
+        git show "${CURRENT_BRANCH}:.cookiecutter.json" > .cookiecutter.json
         jq ".cookiecutter.template_sha = \"${NEW_SHA}\"" \
           .cookiecutter.json > tmp.json && mv tmp.json .cookiecutter.json
 
         git add -A
         git commit -m "Template render at ${NEW_SHA}"
 
+        # Save the commit SHA of template-rendered
+        TEMPLATE_COMMIT=$(git rev-parse HEAD)
+
         # Switch back to repo branch and create update branch
-        git checkout '${{ inputs.repo_branch }}'
+        git checkout "${CURRENT_BRANCH}"
         git checkout -b "$BRANCH"
 
-        # Merge template-rendered branch, allowing conflicts
-        if git merge template-rendered --allow-unrelated-histories --no-edit -m "chore: update from template ${OLD_SHA} → ${NEW_SHA}"; then
+        # Merge using the commit SHA instead of branch name
+        if git merge "$TEMPLATE_COMMIT" --allow-unrelated-histories --no-edit -m "chore: update from template ${OLD_SHA} → ${NEW_SHA}"; then
           echo "merge_had_conflicts=false" >> "$GITHUB_OUTPUT"
         else
           echo "::warning ::Merge had conflicts. They will be included in the PR for manual resolution."
@@ -148,9 +154,6 @@ jobs:
           git add -A
           git commit -m "chore: update from template ${OLD_SHA} → ${NEW_SHA} (with conflicts)"
         fi
-
-        # Clean up temporary branch
-        git branch -D template-rendered
 
         git push origin "$BRANCH"
         echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
