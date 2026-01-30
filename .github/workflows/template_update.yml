@@ -121,8 +121,8 @@ jobs:
         git config user.name "GitHub Actions Bot"
         git config user.email "actions@github.com"
         
-        # Configure git to use the token for authentication
-        git config url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+        # Save remote URL before any operations
+        REMOTE_URL=$(git remote get-url origin)
         
         # Save current branch name
         CURRENT_BRANCH="${{ inputs.repo_branch }}"
@@ -159,6 +159,14 @@ jobs:
           git add -A
           git commit -m "chore: update from template ${OLD_SHA} → ${NEW_SHA} (with conflicts)"
         fi
+        
+        # Ensure remote is set (may have been lost)
+        if ! git remote get-url origin >/dev/null 2>&1; then
+          git remote add origin "$REMOTE_URL"
+        fi
+        
+        # Configure authentication for push
+        git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
         
         git push origin "$BRANCH"
         echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
