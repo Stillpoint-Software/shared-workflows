@@ -119,8 +119,9 @@ jobs:
         git config user.name "GitHub Actions Bot"
         git config user.email "actions@github.com"
         
-        # Save current branch name
+        # Save current branch name and remote URL
         CURRENT_BRANCH="${{ inputs.repo_branch }}"
+        REMOTE_URL=$(git remote get-url origin)
         
         # Create an orphan branch with the rendered template content
         git checkout --orphan template-rendered
@@ -144,6 +145,11 @@ jobs:
         # Switch back to repo branch and create update branch
         git checkout "${CURRENT_BRANCH}"
         git checkout -b "$BRANCH"
+        
+        # Ensure remote is configured (may have been lost during orphan branch operations)
+        if ! git remote get-url origin >/dev/null 2>&1; then
+          git remote add origin "$REMOTE_URL"
+        fi
         
         # Merge using the commit SHA instead of branch name
         if git merge "$TEMPLATE_COMMIT" --allow-unrelated-histories --no-edit -m "chore: update from template ${OLD_SHA} → ${NEW_SHA}"; then
