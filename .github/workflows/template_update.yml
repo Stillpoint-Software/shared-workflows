@@ -71,8 +71,6 @@ jobs:
         ref: ${{ inputs.repo_branch }}
         fetch-depth: 0
         submodules: false
-        token: ${{ secrets.token }}
-        persist-credentials: true
 
     - name: Set up Python
       uses: actions/setup-python@v5
