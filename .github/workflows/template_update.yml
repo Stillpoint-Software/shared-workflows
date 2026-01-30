@@ -14,7 +14,7 @@ on:
     secrets:
       token:
         description: 'Token with permissions'
-        required: true
+        required: false
 
 permissions:
   contents: write
