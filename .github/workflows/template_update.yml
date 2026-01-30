@@ -13,8 +13,8 @@ on:
         type: string
     secrets:
       token:
-        description: 'Token with workflow permissions (optional, falls back to GITHUB_TOKEN)'
-        required: false
+        description: 'Token with workflow permissions'
+        required: true
 
 permissions:
   contents: write
@@ -36,6 +36,7 @@ jobs:
         ref: ${{ inputs.repo_branch }}
         sparse-checkout: .cookiecutter.json
         sparse-checkout-cone-mode: false
+        # No token needed here - just reading a file
 
     - name: Read old template SHA
       id: old_sha
@@ -166,7 +167,7 @@ jobs:
 
     - name: Create pull request
       env:
-        GITHUB_TOKEN: ${{ secrets.token || github.token }}
+        GITHUB_TOKEN: ${{ secrets.token }}
       run: |
         OLD_SHA="${{ needs.check-update.outputs.old_sha }}"
         NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
