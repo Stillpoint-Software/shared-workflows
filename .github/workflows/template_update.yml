@@ -108,6 +108,8 @@ jobs:
     - name: Create template branch and merge
       id: merge
       shell: bash
+      env:
+          GH_TOKEN: ${{ secrets.token || github.token }}
       run: |
         set -euo pipefail
         
@@ -153,6 +155,10 @@ jobs:
           echo "merge_had_conflicts=true" >> "$GITHUB_OUTPUT"
           git add -A
           git commit -m "chore: update from template ${OLD_SHA} → ${NEW_SHA} (with conflicts)"
+        fi
+        
+        if ! git remote get-url origin >/dev/null 2>&1; then
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
         fi
         
         git push origin "$BRANCH"
