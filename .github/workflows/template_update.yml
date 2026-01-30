@@ -71,7 +71,7 @@ jobs:
         if: env.SHA_CHANGED == 'false'
         run: echo "✂️  SHA unchanged; nothing to update."
 
-            - name: Render templates + apply patch (temp work OUTSIDE repo) + commit branch
+      - name: Render templates + apply patch (temp work OUTSIDE repo) + commit branch
         if: env.SHA_CHANGED == 'true'
         shell: bash
         run: |
