@@ -21,167 +21,152 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout project repo
-      uses: actions/checkout@v4
-      with:
-        repository: ${{ github.repository }}
-        ref: ${{ inputs.repo_branch }}
-        fetch-depth: 0
-        submodules: false
+      - name: Checkout project repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.repo_branch }}
+          fetch-depth: 0
+          submodules: false
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.x'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
-    - name: Install dependencies
-      run: pip install cookiecutter jq
+      - name: Install dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          pip install cookiecutter
 
-    - name: Read old template SHA
-      id: old_sha
-      run: |
-        SHA=$(jq -r '.cookiecutter.template_sha // empty' .cookiecutter.json)
-        if [ -z "$SHA" ]; then
-          echo "::error ::.cookiecutter.json is missing cookiecutter.template_sha"
-          exit 1
-        fi
-        echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-
-    - name: Fetch new template SHA
-      id: new_sha
-      run: |
-        echo "sha=$(git ls-remote '${{ inputs.template_repo }}' HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
-
-    - name: Determine if Template was updated
-      run: |
-        if [ "${{ steps.old_sha.outputs.sha }}" = "${{ steps.new_sha.outputs.sha }}" ]; then
-          echo "SHA_CHANGED=false" >> "$GITHUB_ENV"
-        else
-          echo "SHA_CHANGED=true"  >> "$GITHUB_ENV"
-        fi
-
-    - name: Exit if SHA unchanged
-      if: env.SHA_CHANGED == 'false'
-      run: echo "✂️  SHA unchanged; nothing to update."
-
-    - name: Clone template at OLD SHA
-      if: env.SHA_CHANGED == 'true'
-      run: |
-        git clone '${{ inputs.template_repo }}' base-template
-        git -C base-template checkout '${{ steps.old_sha.outputs.sha }}'
-
-    - name: Clone template at NEW SHA
-      if: env.SHA_CHANGED == 'true'
-      run: git clone '${{ inputs.template_repo }}' template-source
-
-    - name: Render OLD template (base-template → template-base)
-      if: env.SHA_CHANGED == 'true'
-      run: |
-        rm -rf ~/.cookiecutters/*
-        mkdir -p template-base
-        cookiecutter base-template \
-          --replay-file .cookiecutter.json \
-          --overwrite-if-exists \
-          --output-dir template-base
-
-    - name: Render NEW template (template-source → template-new)
-      if: env.SHA_CHANGED == 'true'
-      run: |
-        rm -rf ~/.cookiecutters/*
-        mkdir -p template-new
-        cookiecutter template-source \
-          --replay-file .cookiecutter.json \
-          --overwrite-if-exists \
-          --output-dir template-new
-
-    - name: Apply patch & raise PR
-      if: env.SHA_CHANGED == 'true'
-      shell: bash
-      run: |
-        diff -ruN template-base template-new > update.patch || true
-
-        if [ ! -s update.patch ]; then
-          echo "ℹ️  No template diffs; only SHA bump will occur."
-        else
-          # 1) Pre-create target directories for NEW files (paths normalized for -p1)
-          awk '
-            /^\+\+\+ / {
-              f=$2
-              if (f == "/dev/null") next
-              # Normalize path for -p1:
-              if (f ~ /^[ab]\//) { sub(/^[ab]\//, "", f) }  # git-style (a/ or b/)
-              else { sub(/^[^/]+\//, "", f) }               # strip "template-new/" (or "template-base/")
-              if (match(f, /(.+)\//, m)) print m[1]
-            }
-          ' update.patch | sort -u | xargs -r mkdir -p
-
-          # 2) Seed missing files from template-base so patch has a base to modify
-          #    (If a file exists in template-base but not in the repo, copy it over.)
-          while IFS= read -r OLD; do
-            [ "$OLD" = "/dev/null" ] && continue
-            TGT="$OLD"
-            if [[ "$TGT" =~ ^[ab]/ ]]; then
-              TGT="${TGT#*/}"                
-            else
-              TGT="${TGT#*/}"                 
-            fi
-            mkdir -p "$(dirname "$TGT")"
-            if [ ! -e "$TGT" ] && [ -f "$OLD" ]; then
-              cp -a "$OLD" "$TGT"
-            fi
-          done < <(awk '/^--- /{print $2}' update.patch)
-
-          # 3) Apply patch non-interactively; fail on conflicts
-          if ! patch --batch -p1 < update.patch; then
-            echo "::error ::Patch could not be applied; possible conflict or missing files."
+      - name: Read old template SHA
+        id: old_sha
+        shell: bash
+        run: |
+          SHA=$(jq -r '.cookiecutter.template_sha // empty' .cookiecutter.json)
+          if [ -z "$SHA" ]; then
+            echo "::error ::.cookiecutter.json is missing cookiecutter.template_sha"
             exit 1
           fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch new template SHA
+        id: new_sha
+        shell: bash
+        run: |
+          echo "sha=$(git ls-remote '${{ inputs.template_repo }}' HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Determine if Template was updated
+        shell: bash
+        run: |
+          if [ "${{ steps.old_sha.outputs.sha }}" = "${{ steps.new_sha.outputs.sha }}" ]; then
+            echo "SHA_CHANGED=false" >> "$GITHUB_ENV"
+          else
+            echo "SHA_CHANGED=true"  >> "$GITHUB_ENV"
+          fi
+
+      - name: Exit if SHA unchanged
+        if: env.SHA_CHANGED == 'false'
+        run: echo "✂️  SHA unchanged; nothing to update."
+
+      - name: Render templates + apply patch (temp work OUTSIDE repo) + commit branch
+        if: env.SHA_CHANGED == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORKDIR="${RUNNER_TEMP}/cc-template-update"
+          BASE_REPO="${WORKDIR}/base-template"
+          NEW_REPO="${WORKDIR}/template-source"
+          OUT_BASE="${WORKDIR}/template-base"
+          OUT_NEW="${WORKDIR}/template-new"
+          PATCHFILE="${WORKDIR}/update.patch"
+
+          rm -rf "$WORKDIR"
+          mkdir -p "$WORKDIR" "$OUT_BASE" "$OUT_NEW"
+
+          echo "Cloning OLD template SHA..."
+          git clone '${{ inputs.template_repo }}' "$BASE_REPO"
+          git -C "$BASE_REPO" checkout '${{ steps.old_sha.outputs.sha }}'
+
+          echo "Cloning NEW template SHA..."
+          git clone '${{ inputs.template_repo }}' "$NEW_REPO"
+
+          echo "Rendering OLD template..."
+          rm -rf ~/.cookiecutters/*
+          cookiecutter "$BASE_REPO" \
+            --replay-file .cookiecutter.json \
+            --overwrite-if-exists \
+            --output-dir "$OUT_BASE"
+
+          echo "Rendering NEW template..."
+          rm -rf ~/.cookiecutters/*
+          cookiecutter "$NEW_REPO" \
+            --replay-file .cookiecutter.json \
+            --overwrite-if-exists \
+            --output-dir "$OUT_NEW"
+
+          echo "Diffing renders..."
+          diff -ruN "$OUT_BASE" "$OUT_NEW" > "$PATCHFILE" || true
+
+          if [ ! -s "$PATCHFILE" ]; then
+            echo "ℹ️  No template diffs; only SHA bump will occur."
+          else
+            echo "Pre-creating dirs for new files..."
+            awk '
+              /^\+\+\+ / {
+                f=$2
+                if (f == "/dev/null") next
+                # remove leading directory (template-new/ or template-base/)
+                sub(/^[^/]+\//, "", f)
+                if (match(f, /(.+)\//, m)) print m[1]
+              }
+            ' "$PATCHFILE" | sort -u | xargs -r mkdir -p
+
+            echo "Seeding missing base files so patch can modify them..."
+            awk '/^--- /{print $2}' "$PATCHFILE" | while read -r OLD; do
+              [ "$OLD" = "/dev/null" ] && continue
+              # strip leading dir from diff path
+              REL="${OLD#*/}"
+              SRC="$OUT_BASE/${REL}"
+              TGT="${REL}"
+              mkdir -p "$(dirname "$TGT")"
+              if [ ! -e "$TGT" ] && [ -f "$SRC" ]; then
+                cp -a "$SRC" "$TGT"
+              fi
+            done
+
+            echo "Applying patch..."
+            patch --batch -p1 < "$PATCHFILE"
+            echo "✅ Applied template changes"
+          fi
+
+          echo "Updating template SHA in .cookiecutter.json..."
+          jq ".cookiecutter.template_sha = \"${{ steps.new_sha.outputs.sha }}\"" \
+            .cookiecutter.json > tmp && mv tmp .cookiecutter.json
+
+          BRANCH="template-update-${{ steps.new_sha.outputs.sha }}"
+          echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+          git checkout -b "$BRANCH"
+          git config user.name  "GitHub Actions Bot"
+          git config user.email "actions@github.com"
 
           git add -A
-          echo "✅ Applied template changes"
-        fi
+          git commit -m "chore: merge template updates ${{ steps.old_sha.outputs.sha }} → ${{ steps.new_sha.outputs.sha }}"
+          git push origin "$BRANCH"
 
-        jq ".cookiecutter.template_sha = \"${{ steps.new_sha.outputs.sha }}\"" \
-          .cookiecutter.json > tmp && mv tmp .cookiecutter.json
-        git add .cookiecutter.json
+      - name: Create pull request
+        if: env.SHA_CHANGED == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh pr create \
+            --title "chore: merge template updates ${{ steps.old_sha.outputs.sha }} → ${{ steps.new_sha.outputs.sha }}" \
+            --body  "Updates cookiecutter.template_sha from ${{ steps.old_sha.outputs.sha }} to ${{ steps.new_sha.outputs.sha }}" \
+            --base  '${{ inputs.repo_branch }}' \
+            --head  "${{ env.BRANCH }}"
 
-        BRANCH="template-update-${{ steps.new_sha.outputs.sha }}"
-        git checkout -b "$BRANCH"
-        git config user.name  "GitHub Actions Bot"
-        git config user.email "actions@github.com"
-        git commit -am "chore: merge template updates ${{ steps.old_sha.outputs.sha }} → ${{ steps.new_sha.outputs.sha }}"
-        git push origin "$BRANCH"
-
-    - name: Create pull request
-      if: env.SHA_CHANGED == 'true'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        gh pr create \
-          --title "chore: merge template updates ${{ steps.old_sha.outputs.sha }} → ${{ steps.new_sha.outputs.sha }}" \
-          --body  "Updates cookiecutter.template_sha from ${{ steps.old_sha.outputs.sha }} to ${{ steps.new_sha.outputs.sha }}" \
-          --base  '${{ inputs.repo_branch }}' \
-          --head  "$BRANCH"
-    - name: Final cleanup (remove temp dirs & neutralize bad .gitmodules)
-      if: always()
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        # Remove temporary working folders & patch file
-        rm -rf base-template template-source template-base template-new update.patch
-
-        # Defensive: if a stray/invalid .gitmodules exists (missing URL entries),
-        # delete it so actions/checkout post-job doesn't crash on submodule foreach.
-        if [ -f .gitmodules ]; then
-          if ! git config -f .gitmodules --get-regexp '^submodule\..*\.url$' >/dev/null 2>&1; then
-            echo "Removing invalid .gitmodules (no submodule URLs found)."
-            rm -f .gitmodules
-            # Purge any lingering local submodule config and modules dir
-            git config --local --name-only --get-regexp '^submodule\.' \
-              | xargs -r -n1 -I {} git config --local --unset-all "{}"
-            rm -rf .git/modules || true
-          fi
-        fi
-
-        echo "Cleanup complete."
