@@ -11,11 +11,14 @@ on:
         description: 'Branch of the project repo to update'
         required: true
         type: string
+    secrets:
+      token:
+        description: 'Token with workflow permissions (optional, falls back to GITHUB_TOKEN)'
+        required: false
 
 permissions:
   contents: write
   pull-requests: write
-  workflows: write
 
 jobs:
   check-update:
@@ -72,6 +75,7 @@ jobs:
         ref: ${{ inputs.repo_branch }}
         fetch-depth: 0
         submodules: false
+        token: ${{ secrets.token || github.token }}
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -110,7 +114,7 @@ jobs:
       id: merge
       shell: bash
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.token || github.token }}
       run: |
         set -euo pipefail
         
@@ -174,7 +178,7 @@ jobs:
 
     - name: Create pull request
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.token || github.token }}
       run: |
         OLD_SHA="${{ needs.check-update.outputs.old_sha }}"
         NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
