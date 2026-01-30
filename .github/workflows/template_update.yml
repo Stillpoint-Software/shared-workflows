@@ -11,10 +11,6 @@ on:
         description: 'Branch of the project repo to update'
         required: true
         type: string
-    secrets:
-      token:
-        description: 'Token with permissions'
-        required: false
 
 permissions:
   contents: write
