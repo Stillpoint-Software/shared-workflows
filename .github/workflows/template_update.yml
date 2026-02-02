@@ -30,6 +30,11 @@ jobs:
       new_sha: ${{ steps.new_sha.outputs.sha }}
 
     steps:
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+        
       - name: Checkout project repo
         uses: actions/checkout@v4
         with:
@@ -146,12 +151,26 @@ jobs:
           jq ".cookiecutter.template_sha = \"${NEW_SHA}\"" \
             .cookiecutter.json > tmp.json && mv tmp.json .cookiecutter.json
 
+          #removed deprecated cookiecutter q & a
           python /tmp/template-source/hooks/prune_cookiecutter_json.py --cookie .cookiecutter.json --deprecations templates/deprecations.json
 
-          git add -A
-          git commit -m "Template render at ${NEW_SHA}"
+           # Format .NET code to reduce whitespace-only churn in PRs
+           # Try to format a solution if present; otherwise format the repo.
+           SOLUTION="$(ls -1 *.slnx 2>/dev/null | head -n 1 || true)"
 
-          TEMPLATE_COMMIT=$(git rev-parse HEAD)
+            if [ -n "$SOLUTION" ]; then
+              echo "🧼 Running dotnet format on $SOLUTION"
+              dotnet restore "$SOLUTION"
+              dotnet format "$SOLUTION" --no-restore
+            else
+              echo "🧼 Running dotnet format (no .slnx found at repo root)"
+              dotnet format
+            fi
+            
+              git add -A
+              git commit -m "Template render at ${NEW_SHA}"
+    
+              TEMPLATE_COMMIT=$(git rev-parse HEAD)
 
           # Switch back to repo branch and create update branch
           git checkout "${CURRENT_BRANCH}"
