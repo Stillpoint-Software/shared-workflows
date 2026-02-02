@@ -146,6 +146,8 @@ jobs:
           jq ".cookiecutter.template_sha = \"${NEW_SHA}\"" \
             .cookiecutter.json > tmp.json && mv tmp.json .cookiecutter.json
 
+          python /tmp/template-source/hooks/prune_cookiecutter_json.py --cookie .cookiecutter.json --deprecations templates/deprecations.json
+
           git add -A
           git commit -m "Template render at ${NEW_SHA}"
 
