@@ -151,8 +151,10 @@ jobs:
           jq ".cookiecutter.template_sha = \"${NEW_SHA}\"" \
             .cookiecutter.json > tmp.json && mv tmp.json .cookiecutter.json
 
-          #removed deprecated cookiecutter q & a
-          python /tmp/template-source/hooks/prune_cookiecutter_json.py --cookie .cookiecutter.json --deprecations deprecations.json
+          #removed deprecated cookiecutter variables
+          python /tmp/template-source/hooks/prune_cookiecutter_json.py \
+          --cookie .cookiecutter.json \
+          --deprecations /tmp/template-source/hooks/deprecated.json
 
            # Format .NET code to reduce whitespace-only churn in PRs
            # Try to format a solution if present; otherwise format the repo.
