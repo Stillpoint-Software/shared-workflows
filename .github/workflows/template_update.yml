@@ -260,8 +260,15 @@ jobs:
         with:
           dotnet-version: "10.0.x"
           
-      - name: Format Code
-        run: dotnet format
+      - name: Format Code (src only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for p in src/*.csproj; do
+            [ -e "$p" ] || { echo "ℹ️ No src/*.csproj; skipping."; exit 0; }
+            dotnet restore "$p"
+            dotnet format "$p" --no-restore
+          done
         
       # format will NOT remove extra lines
       - name: Remove extra blank lines (src only) 
