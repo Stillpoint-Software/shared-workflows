@@ -146,47 +146,52 @@ jobs:
             exit 1
           fi
 
-      - name: Clone template repo
+      - name: Clone template and prepare cookiecutter replay file
         shell: bash
         run: |
           set -euo pipefail
+          
+          # Clone template at new SHA
           rm -rf /tmp/template-source || true
           git clone '${{ inputs.template_repo }}' /tmp/template-source
+          cd /tmp/template-source
+          git checkout "${{ needs.check-update.outputs.new_sha }}"
+          
+          # Copy .cookiecutter.json from project repo to template
+          cp "$GITHUB_WORKSPACE/.cookiecutter.json" /tmp/template-source/.cookiecutter.json
+          
+          # Prune deprecated variables
+          if [ -f "/tmp/template-source/hooks/prune_cookiecutter_json.py" ] && [ -f "/tmp/template-source/hooks/deprecated.json" ]; then
+            echo "🧹 Pruning deprecated variables"
+            python /tmp/template-source/hooks/prune_cookiecutter_json.py \
+              --cookie /tmp/template-source/.cookiecutter.json \
+              --deprecations /tmp/template-source/hooks/deprecated.json
+          else
+            echo "ℹ️ prune_cookiecutter_json.py or deprecated.json not found; skipping prune."
+          fi
 
-      - name: Render template at both SHAs
+      - name: Render template
         id: render
         shell: bash
         run: |
           set -euo pipefail
 
-          render_template() {
-            local sha="$1"
-            local output_dir="$2"
+          rm -rf ~/.cookiecutters/* || true
+          rm -rf /tmp/rendered || true
 
-            cd /tmp/template-source
-            git checkout "$sha"
-            rm -rf ~/.cookiecutters/* || true
-            rm -rf "$output_dir" || true
+          cookiecutter /tmp/template-source \
+            --replay-file /tmp/template-source/.cookiecutter.json \
+            --overwrite-if-exists \
+            --output-dir /tmp/rendered
 
-            cookiecutter /tmp/template-source \
-              --replay-file "$GITHUB_WORKSPACE/.cookiecutter.json" \
-              --overwrite-if-exists \
-              --output-dir "$output_dir"
-          }
+          DIR=$(ls /tmp/rendered | head -n 1 || true)
 
-          render_template "${{ needs.check-update.outputs.old_sha }}" "/tmp/rendered-old"
-          render_template "${{ needs.check-update.outputs.new_sha }}" "/tmp/rendered-new"
-
-          OLD_DIR=$(ls /tmp/rendered-old | head -n 1 || true)
-          NEW_DIR=$(ls /tmp/rendered-new | head -n 1 || true)
-
-          if [ -z "$OLD_DIR" ] || [ -z "$NEW_DIR" ]; then
-            echo "::error ::No rendered output found. old='$OLD_DIR' new='$NEW_DIR'"
+          if [ -z "$DIR" ]; then
+            echo "::error ::No rendered output found"
             exit 1
           fi
 
-          echo "old_dir=$OLD_DIR" >> "$GITHUB_OUTPUT"
-          echo "new_dir=$NEW_DIR" >> "$GITHUB_OUTPUT"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
 
       - name: Create update branch
         shell: bash
@@ -198,7 +203,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SRC="/tmp/rendered-new/${{ steps.render.outputs.new_dir }}/"
+          SRC="/tmp/rendered/${{ steps.render.outputs.dir }}/"
 
           if [ "${{ steps.auth.outputs.enabled }}" = "true" ]; then
             echo "Including workflow updates from template"
@@ -208,74 +213,70 @@ jobs:
             rsync -a --exclude ".git/" --exclude ".github/workflows/" "$SRC" "$GITHUB_WORKSPACE"
           fi
 
-      - name: Delete files removed from template
+      - name: Update .cookiecutter.json
         shell: bash
         run: |
           set -euo pipefail
-
-          OLD_DIR="/tmp/rendered-old/${{ steps.render.outputs.old_dir }}"
-          NEW_DIR="/tmp/rendered-new/${{ steps.render.outputs.new_dir }}"
-
-          echo "🔍 Detecting files removed from template..."
-
-          (cd "$OLD_DIR" && find . -type f -print0) | while IFS= read -r -d '' file; do
-            rel_path="${file#./}"
-
-            if [ "${{ steps.auth.outputs.enabled }}" != "true" ] && [[ "$rel_path" == .github/workflows/* ]]; then
-              continue
-            fi
-
-            if [ ! -f "$NEW_DIR/$rel_path" ] && [ -f "$GITHUB_WORKSPACE/$rel_path" ]; then
-              echo "🗑️ Deleting: $rel_path"
-              rm -f "$GITHUB_WORKSPACE/$rel_path"
-            fi
-          done
-
-          find "$GITHUB_WORKSPACE" -type d -empty -not -path '*/.git/*' -delete 2>/dev/null || true
-
-      - name: Update .cookiecutter.json template_sha
-        shell: bash
-        run: |
-          set -euo pipefail
+          
+          # Copy pruned file back to repo and update template_sha
+          cp /tmp/template-source/.cookiecutter.json "$GITHUB_WORKSPACE/.cookiecutter.json"
+          
           NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
-
           jq ".cookiecutter.template_sha = \"${NEW_SHA}\"" \
             .cookiecutter.json > tmp.json && mv tmp.json .cookiecutter.json
-
-          if [ -f "/tmp/template-source/hooks/prune_cookiecutter_json.py" ] && [ -f "/tmp/template-source/hooks/deprecated.json" ]; then
-            python /tmp/template-source/hooks/prune_cookiecutter_json.py \
-              --cookie .cookiecutter.json \
-              --deprecations /tmp/template-source/hooks/deprecated.json
-          else
-            echo "ℹ️ prune_cookiecutter_json.py or deprecated.json not found; skipping prune."
-          fi
 
       - name: Format C# code (src projects)
         shell: bash
         run: |
           set -euo pipefail
-      
+
           if [ ! -d "src" ]; then
             echo "ℹ️ No src directory; skipping."
             exit 0
           fi
-      
-          # Find all csproj under src/**, excluding bin/obj
+
           mapfile -t CSPROJS < <(
             find "src" -type f -name "*.csproj" \
               -not -path "*/bin/*" -not -path "*/obj/*" \
               | sort
           )
-      
+
           if [ "${#CSPROJS[@]}" -eq 0 ]; then
             echo "ℹ️ No .csproj files found under src/; skipping."
             exit 0
           fi
-      
+
           for p in "${CSPROJS[@]}"; do
-            echo "🧼 Restoring + formatting $p"
+            echo "🧼 Formatting $p"
+            dotnet restore "$p"
             dotnet format "$p" --no-restore
           done
+
+      - name: Remove extra blank lines
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "src")) {
+            Write-Host "ℹ️ No src directory; skipping."
+            exit 0
+          }
+
+          $files = @()
+          $files += Get-ChildItem -Path "src" -Recurse -Filter "*.cs" -File
+          $files += Get-ChildItem -Path "src" -Recurse -Filter "*.csproj" -File
+
+          if ($files.Count -eq 0) {
+            Write-Host "ℹ️ No .cs or .csproj files; skipping."
+            exit 0
+          }
+
+          foreach ($f in $files) {
+            $text = Get-Content -Path $f.FullName -Raw
+            $normalized = $text -replace "`r`n", "`n"
+            $collapsed = [regex]::Replace($normalized, "`n{3,}", "`n`n")
+            if ($collapsed -ne $normalized) {
+              Set-Content -Path $f.FullName -Value $collapsed -NoNewline
+            }
+          }
 
       - name: Commit changes
         id: commit
