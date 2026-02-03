@@ -260,24 +260,26 @@ jobs:
         run: |
           set -euo pipefail
       
-          # Restore or install CSharpier
+          # Only run if there are any C# files
+          if ! git ls-files '*.cs' | grep -q '.'; then
+            echo "ℹ️ No .cs files found; skipping CSharpier."
+            exit 0
+          fi
+      
           if [ -f ".config/dotnet-tools.json" ]; then
             echo "🧼 Restoring local tools (.config/dotnet-tools.json)"
             dotnet tool restore
+      
+            echo "🧼 Running CSharpier (local tool)"
+            dotnet tool run csharpier format .
           else
             echo "🧼 No tool manifest found; installing CSharpier globally"
             dotnet tool install -g csharpier || dotnet tool update -g csharpier
             export PATH="$PATH:$HOME/.dotnet/tools"
-          fi
       
-          # Only run if there are any C# files
-          if git ls-files '*.cs' | grep -q '.'; then
-            echo "🧼 Running CSharpier"
+            echo "🧼 Running CSharpier (global tool)"
             csharpier format .
-          else
-            echo "ℹ️ No .cs files found; skipping CSharpier."
           fi
-
 
       - name: Commit changes (if any)
         id: commit
