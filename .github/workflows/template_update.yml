@@ -255,31 +255,37 @@ jobs:
             echo "ℹ️ prune_cookiecutter_json.py or deprecated.json not found; skipping prune."
           fi
 
-      - name: Format .NET code (CSharpier) to reduce whitespace-only diffs
+      - name: Format C# files (src only)
         shell: bash
         run: |
           set -euo pipefail
       
-          # Only run if there are any C# files
-          if ! git ls-files '*.cs' | grep -q '.'; then
-            echo "ℹ️ No .cs files found; skipping CSharpier."
+          # Skip if no src directory
+          if [ ! -d "src" ]; then
+            echo "ℹ️ No src directory found; skipping."
             exit 0
           fi
       
+          # Skip if no C# files under src
+          if ! git ls-files 'src/**/*.cs' | grep -q '.'; then
+            echo "ℹ️ No C# files under src/; skipping."
+            exit 0
+          fi
+      
+          # Restore local tools if present, otherwise install global
           if [ -f ".config/dotnet-tools.json" ]; then
             echo "🧼 Restoring local tools (.config/dotnet-tools.json)"
             dotnet tool restore
-      
-            echo "🧼 Running CSharpier (local tool)"
-            dotnet tool run csharpier format .
+            RUN_CSHARPIER="dotnet tool run csharpier"
           else
             echo "🧼 No tool manifest found; installing CSharpier globally"
             dotnet tool install -g csharpier || dotnet tool update -g csharpier
             export PATH="$PATH:$HOME/.dotnet/tools"
-      
-            echo "🧼 Running CSharpier (global tool)"
-            csharpier format .
+            RUN_CSHARPIER="csharpier"
           fi
+      
+          echo "🧼 Formatting C# files in src/..."
+          $RUN_CSHARPIER format src
 
       - name: Commit changes (if any)
         id: commit
