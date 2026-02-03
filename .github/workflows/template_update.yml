@@ -267,11 +267,12 @@ jobs:
           for p in src/*.csproj; do
             [ -e "$p" ] || { echo "ℹ️ No src/*.csproj; skipping."; exit 0; }
             dotnet restore "$p"
-            dotnet format "$p" --no-restore
+            dotnet format whitespace "$p" --no-restore
+            dotnet format style "$p" --no-restore
           done
         
       # format will NOT remove extra lines
-      - name: Remove extra blank lines (src only) 
+      - name: Remove extra blank lines (src - .cs and .csproj)
         shell: pwsh
         run: |
           if (-not (Test-Path "src")) {
@@ -279,9 +280,12 @@ jobs:
             exit 0
           }
       
-          $files = Get-ChildItem -Path "src" -Recurse -Filter "*.cs" -File
+          $files = @()
+          $files += Get-ChildItem -Path "src" -Recurse -Filter "*.cs" -File
+          $files += Get-ChildItem -Path "src" -Recurse -Filter "*.csproj" -File
+      
           if (-not $files -or $files.Count -eq 0) {
-            Write-Host "ℹ️ No .cs files under src/; skipping blank-line cleanup."
+            Write-Host "ℹ️ No .cs or .csproj files under src/; skipping blank-line cleanup."
             exit 0
           }
       
@@ -291,11 +295,10 @@ jobs:
             # Normalize to LF for processing
             $normalized = $text -replace "`r`n", "`n"
       
-            # Collapse 3+ newlines to 2 (max one blank line)
+            # Collapse 3+ consecutive newlines to 2 (max one blank line)
             $collapsed = [regex]::Replace($normalized, "`n{3,}", "`n`n")
       
             if ($collapsed -ne $normalized) {
-              # Write back (no trailing newline changes beyond what content dictates)
               Set-Content -Path $f.FullName -Value $collapsed -NoNewline
             }
           }
