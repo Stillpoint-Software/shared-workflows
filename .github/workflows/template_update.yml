@@ -101,7 +101,7 @@ jobs:
       - name: Check if a template update PR is already open
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.WORKFLOW_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           BRANCH="${{ steps.branch.outputs.name }}"
@@ -315,7 +315,7 @@ jobs:
         if: steps.commit.outputs.has_changes == 'true'
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.WORKFLOW_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
@@ -325,7 +325,7 @@ jobs:
         if: steps.commit.outputs.has_changes == 'true'
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.WORKFLOW_TOKEN || github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           OLD_SHA="${{ needs.check-update.outputs.old_sha }}"
