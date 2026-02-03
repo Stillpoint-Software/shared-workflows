@@ -274,7 +274,6 @@ jobs:
       
           for p in "${CSPROJS[@]}"; do
             echo "🧼 Restoring + formatting $p"
-            dotnet restore "$p"
             dotnet format "$p" --no-restore
           done
 
