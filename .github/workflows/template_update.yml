@@ -160,7 +160,6 @@ jobs:
 
             if [ -n "$SOLUTION" ]; then
               echo "🧼 Running dotnet format on $SOLUTION"
-              dotnet restore "$SOLUTION"
               dotnet format "$SOLUTION" --no-restore
             else
               echo "🧼 Running dotnet format (no .slnx found at repo root)"
