@@ -4,13 +4,22 @@ on:
   workflow_call:
     inputs:
       template_repo:
-        description: 'URL of the Cookiecutter template repo'
+        description: "URL of the Cookiecutter template repo"
         required: true
         type: string
       repo_branch:
-        description: 'Branch of the project repo to update'
+        description: "Branch of the project repo to update"
         required: true
         type: string
+      update_workflows:
+        description: "Include .github/workflows updates from template? (true/false; empty defaults false)"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      TEMPLATE_UPDATE_TOKEN:
+        description: "PAT with repo + workflow scopes (required to push workflow file changes when enabled)"
+        required: false
 
 permissions:
   contents: write
@@ -67,6 +76,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Resolve update_workflows flag
+        id: wf
+        shell: bash
+        run: |
+          if [ "${{ inputs.update_workflows }}" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Enforce workflow token if updating workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.wf.outputs.enabled }}" = "true" ] && [ -z "${{ secrets.TEMPLATE_UPDATE_TOKEN }}" ]; then
+            echo "::error ::update_workflows=true requires secrets.TEMPLATE_UPDATE_TOKEN (PAT with repo+workflow)."
+            exit 1
+          fi
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
@@ -79,11 +107,14 @@ jobs:
           ref: ${{ inputs.repo_branch }}
           fetch-depth: 0
           submodules: false
+          # If updating workflows, we must use a PAT that can update workflow files.
+          # Otherwise, default GITHUB_TOKEN is fine.
+          token: ${{ steps.wf.outputs.enabled == 'true' && secrets.TEMPLATE_UPDATE_TOKEN || github.token }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: "3.x"
 
       - name: Install dependencies
         shell: bash
@@ -101,13 +132,13 @@ jobs:
       - name: Check if a template update PR is already open
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.wf.outputs.enabled == 'true' && secrets.TEMPLATE_UPDATE_TOKEN || github.token }}
         run: |
           set -euo pipefail
           BRANCH="${{ steps.branch.outputs.name }}"
           BASE="${{ inputs.repo_branch }}"
-
           URL=$(gh pr list --state open --head "$BRANCH" --base "$BASE" --json url --jq '.[0].url')
+
           if [ -n "$URL" ] && [ "$URL" != "null" ]; then
             echo "::error ::An open PR already exists for branch '$BRANCH': $URL"
             exit 1
@@ -191,7 +222,14 @@ jobs:
         run: |
           set -euo pipefail
           SRC="/tmp/rendered-new/${{ steps.rendered_new.outputs.name }}/"
-          rsync -a --exclude ".git/" "$SRC" "$GITHUB_WORKSPACE"
+
+          if [ "${{ steps.wf.outputs.enabled }}" = "true" ]; then
+            echo "Including workflow updates from template"
+            rsync -a --exclude ".git/" "$SRC" "$GITHUB_WORKSPACE"
+          else
+            echo "Excluding workflow updates from template"
+            rsync -a --exclude ".git/" --exclude ".github/workflows/" "$SRC" "$GITHUB_WORKSPACE"
+          fi
 
       - name: Delete files removed from template (old → new)
         shell: bash
@@ -210,6 +248,12 @@ jobs:
 
           (cd "$OLD_DIR" && find . -type f -print0) | while IFS= read -r -d '' file; do
             rel_path="${file#./}"
+
+            # If not updating workflows, do not delete workflow files
+            if [ "${{ steps.wf.outputs.enabled }}" != "true" ] && [[ "$rel_path" == .github/workflows/* ]]; then
+              continue
+            fi
+
             if [ ! -f "$NEW_DIR/$rel_path" ] && [ -f "$GITHUB_WORKSPACE/$rel_path" ]; then
               echo "🗑️ Deleting: $rel_path"
               rm -f "$GITHUB_WORKSPACE/$rel_path"
@@ -261,8 +305,7 @@ jobs:
             dotnet format whitespace "$p" --no-restore
             dotnet format style "$p" --no-restore
           done
-          
-      # Dotnet format will NOT do this
+
       - name: Remove extra blank lines (src - .cs and .csproj)
         shell: pwsh
         run: |
@@ -314,18 +357,15 @@ jobs:
       - name: Push branch
         if: steps.commit.outputs.has_changes == 'true'
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push -u origin "${{ steps.branch.outputs.name }}"
 
       - name: Create pull request (no merge)
         if: steps.commit.outputs.has_changes == 'true'
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.wf.outputs.enabled == 'true' && secrets.TEMPLATE_UPDATE_TOKEN || github.token }}
         run: |
           set -euo pipefail
           OLD_SHA="${{ needs.check-update.outputs.old_sha }}"
