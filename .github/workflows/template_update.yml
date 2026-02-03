@@ -270,50 +270,57 @@ jobs:
             dotnet format "$p" --no-restore
           done
 
-      - name: Remove extra blank lines
-        shell: pwsh
-        run: |
-          $root = Join-Path $PWD "src"
-
-          if (-not (Test-Path $root)) {
-            Write-Host "ℹ️ No src directory; skipping."
-            exit 0
-          }
-
-          # Find files under src/ (any depth), skipping bin/ and obj/
-          $files = Get-ChildItem -Path $root -Recurse -File |
-            Where-Object {
-              ($_.Extension -in @(".cs", ".csproj")) -and
-              ($_.FullName -notmatch "[/\\]bin[/\\]") -and
-              ($_.FullName -notmatch "[/\\]obj[/\\]")
-            }
-
-          if (-not $files -or $files.Count -eq 0) {
-            Write-Host "ℹ️ No .cs or .csproj files under src/; skipping."
-            exit 0
-          }
-
-          foreach ($f in $files) {
-            $text = Get-Content -Path $f.FullName -Raw
-
-            # Normalize to LF for processing
-            $normalized = $text -replace "`r`n", "`n"
-
-            # Track whether file ended with newline
-            $endsWithNewline = $normalized.EndsWith("`n")
-
-            # Collapse 2+ newlines to 1 (max one blank line)
-            $collapsed = [regex]::Replace($normalized, "`n{2,}", "`n`n")
-
-            # Restore original newline-at-EOF behavior
-            if ($endsWithNewline -and -not $collapsed.EndsWith("`n")) { $collapsed += "`n" }
-            if (-not $endsWithNewline -and $collapsed.EndsWith("`n")) { $collapsed = $collapsed.TrimEnd("`n") }
-
-            if ($collapsed -ne $normalized) {
-              # UTF-8 without BOM, stable output
-              [System.IO.File]::WriteAllText($f.FullName, $collapsed, (New-Object System.Text.UTF8Encoding($false)))
-            }
-          }
+          - name: Remove extra blank lines
+            shell: pwsh
+            run: |
+              $root = Join-Path $PWD "src"
+          
+              if (-not (Test-Path $root)) {
+                Write-Host "ℹ️ No src directory; skipping."
+                exit 0
+              }
+          
+              $files = Get-ChildItem -Path $root -Recurse -File |
+                Where-Object {
+                  ($_.Extension -in @(".cs", ".csproj")) -and
+                  ($_.FullName -notmatch "[/\\]bin[/\\]") -and
+                  ($_.FullName -notmatch "[/\\]obj[/\\]")
+                }
+          
+              if (-not $files -or $files.Count -eq 0) {
+                Write-Host "ℹ️ No matching files under src/; skipping."
+                exit 0
+              }
+          
+              foreach ($f in $files) {
+                $text = Get-Content -Path $f.FullName -Raw
+          
+                # Preserve original line ending style (CRLF vs LF)
+                $usesCrlf = $text.Contains("`r`n")
+          
+                # Normalize to LF for processing
+                $normalized = $text -replace "`r`n", "`n"
+          
+                # Preserve whether file ended with a newline
+                $endsWithNewline = $normalized.EndsWith("`n")
+          
+                # Collapse 2+ blank lines where a "blank line" may contain spaces/tabs
+                # This turns 2+ blank lines into exactly 1 blank line
+                $collapsed = [regex]::Replace($normalized, "`n(?:[ `t]*`n){2,}", "`n`n")
+          
+                # Restore original newline-at-EOF behavior
+                if ($endsWithNewline -and -not $collapsed.EndsWith("`n")) { $collapsed += "`n" }
+                if (-not $endsWithNewline -and $collapsed.EndsWith("`n")) { $collapsed = $collapsed.TrimEnd("`n") }
+          
+                # Convert back to CRLF if that’s what the file used
+                if ($usesCrlf) {
+                  $collapsed = $collapsed -replace "`n", "`r`n"
+                }
+          
+                if ($collapsed -ne $text) {
+                  [System.IO.File]::WriteAllText($f.FullName, $collapsed, (New-Object System.Text.UTF8Encoding($false)))
+                }
+              }
 
       - name: Commit changes
         id: commit
