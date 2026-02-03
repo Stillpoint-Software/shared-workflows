@@ -95,11 +95,6 @@ jobs:
             echo "token=${{ github.token }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "10.0.x"
-
       - name: Checkout project repo
         uses: actions/checkout@v4
         with:
@@ -225,32 +220,6 @@ jobs:
           jq ".cookiecutter.template_sha = \"${NEW_SHA}\"" \
             .cookiecutter.json > tmp.json && mv tmp.json .cookiecutter.json
 
-      - name: Format C# code (src projects)
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [ ! -d "src" ]; then
-            echo "ℹ️ No src directory; skipping."
-            exit 0
-          fi
-
-          mapfile -t CSPROJS < <(
-            find "src" -type f -name "*.csproj" \
-              -not -path "*/bin/*" -not -path "*/obj/*" \
-              | sort
-          )
-
-          if [ "${#CSPROJS[@]}" -eq 0 ]; then
-            echo "ℹ️ No .csproj files found under src/; skipping."
-            exit 0
-          fi
-
-          for p in "${CSPROJS[@]}"; do
-            echo "🧼 Formatting $p"
-            dotnet format "$p" --no-restore
-          done
-
       - name: Remove extra blank lines
         shell: pwsh
         run: |
@@ -271,7 +240,7 @@ jobs:
           foreach ($f in $files) {
             $text = Get-Content -Path $f.FullName -Raw
             $normalized = $text -replace "`r`n", "`n"
-            $collapsed = [regex]::Replace($normalized, "`n{3,}", "`n`n")
+            $collapsed = [regex]::Replace($normalized, "`n{2,}", "`n`n")
             if ($collapsed -ne $normalized) {
               Set-Content -Path $f.FullName -Value $collapsed -NoNewline
             }
