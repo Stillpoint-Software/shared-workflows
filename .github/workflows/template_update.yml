@@ -12,13 +12,12 @@ on:
         required: true
         type: string
       update_workflows:
-        description: "Include .github/workflows updates from template? (true/false; empty defaults false)"
+        description: "Include .github/workflows updates from template? (true/false)"
         required: false
-        type: string
-        default: ""
-    secrets:
+        type: boolean
+        default: false
+     secrets:
       TEMPLATE_UPDATE_TOKEN:
-        description: "PAT with repo + workflow scopes (required to push workflow file changes when enabled)"
         required: false
 
 permissions:
