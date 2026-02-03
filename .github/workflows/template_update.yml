@@ -156,14 +156,23 @@ jobs:
           --cookie .cookiecutter.json \
           --deprecations /tmp/template-source/hooks/deprecated.json
 
-          # Format .NET code to reduce whitespace-only churn in PRs
-          # Try to format a solution if present; otherwise format the repo.
-          # Install + run CSharpier before committing rendered output
-          dotnet tool install -g csharpier || true
-          export PATH="$PATH:$HOME/.dotnet/tools"
-            
-          # Format all C# files in the repo
-          dotnet csharpier .
+          #Format .NET code (C#) with CSharpier to reduce whitespace-only in PRs
+          if [ -f ".config/dotnet-tools.json" ]; then
+             echo "🧼 Restoring local tools (.config/dotnet-tools.json)"
+             dotnet tool restore
+          else
+            echo "🧼 No tool manifest found; installing CSharpier globally"
+            dotnet tool install -g csharpier || dotnet tool update -g csharpier
+            export PATH="$PATH:$HOME/.dotnet/tools"
+          fi
+          
+          # Only run if there are any C# files
+          if git ls-files '*.cs' | grep -q '.'; then
+            echo "🧼 Running CSharpier"
+            dotnet csharpier .
+          else
+            echo "ℹ️ No .cs files found; skipping CSharpier."
+          fi
 
           git add -A
           git commit -m "Template render at ${NEW_SHA}"
