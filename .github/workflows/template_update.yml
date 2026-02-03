@@ -255,38 +255,44 @@ jobs:
             echo "ℹ️ prune_cookiecutter_json.py or deprecated.json not found; skipping prune."
           fi
 
-      - name: Format C# files (src only)
-        shell: bash
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+          
+      - name: Format Code
+        run: dotnet format
+        
+      # format will NOT remove extra lines
+      - name: Remove extra blank lines (src only) 
+        shell: pwsh
         run: |
-          set -euo pipefail
-      
-          # Skip if no src directory
-          if [ ! -d "src" ]; then
-            echo "ℹ️ No src directory found; skipping."
+          if (-not (Test-Path "src")) {
+            Write-Host "ℹ️ No src directory; skipping blank-line cleanup."
             exit 0
-          fi
+          }
       
-          # Skip if no C# files under src
-          if ! git ls-files 'src/**/*.cs' | grep -q '.'; then
-            echo "ℹ️ No C# files under src/; skipping."
+          $files = Get-ChildItem -Path "src" -Recurse -Filter "*.cs" -File
+          if (-not $files -or $files.Count -eq 0) {
+            Write-Host "ℹ️ No .cs files under src/; skipping blank-line cleanup."
             exit 0
-          fi
+          }
       
-          # Restore local tools if present, otherwise install global
-          if [ -f ".config/dotnet-tools.json" ]; then
-            echo "🧼 Restoring local tools (.config/dotnet-tools.json)"
-            dotnet tool restore
-            RUN_CSHARPIER="dotnet tool run csharpier"
-          else
-            echo "🧼 No tool manifest found; installing CSharpier globally"
-            dotnet tool install -g csharpier || dotnet tool update -g csharpier
-            export PATH="$PATH:$HOME/.dotnet/tools"
-            RUN_CSHARPIER="csharpier"
-          fi
+          foreach ($f in $files) {
+            $text = Get-Content -Path $f.FullName -Raw
       
-          echo "🧼 Formatting C# files in src/..."
-          $RUN_CSHARPIER format src
-
+            # Normalize to LF for processing
+            $normalized = $text -replace "`r`n", "`n"
+      
+            # Collapse 3+ newlines to 2 (max one blank line)
+            $collapsed = [regex]::Replace($normalized, "`n{3,}", "`n`n")
+      
+            if ($collapsed -ne $normalized) {
+              # Write back (no trailing newline changes beyond what content dictates)
+              Set-Content -Path $f.FullName -Value $collapsed -NoNewline
+            }
+          }
+      
       - name: Commit changes (if any)
         id: commit
         shell: bash
@@ -308,6 +314,7 @@ jobs:
 
           git commit -m "chore: update from template ${OLD_SHA} → ${NEW_SHA}"
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
+
 
       - name: Push branch
         if: steps.commit.outputs.has_changes == 'true'
