@@ -30,12 +30,7 @@ jobs:
       new_sha: ${{ steps.new_sha.outputs.sha }}
 
     steps:
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "10.0.x"
-        
-      - name: Checkout project repo
+      - name: Checkout project repo (cookiecutter metadata only)
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
@@ -45,6 +40,7 @@ jobs:
 
       - name: Read old template SHA
         id: old_sha
+        shell: bash
         run: |
           SHA=$(jq -r '.cookiecutter.template_sha // empty' .cookiecutter.json)
           if [ -z "$SHA" ]; then
@@ -55,11 +51,13 @@ jobs:
 
       - name: Fetch new template SHA
         id: new_sha
+        shell: bash
         run: |
           echo "sha=$(git ls-remote '${{ inputs.template_repo }}' HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Compare SHAs
         id: compare
+        shell: bash
         run: |
           if [ "${{ steps.old_sha.outputs.sha }}" = "${{ steps.new_sha.outputs.sha }}" ]; then
             echo "✂️ SHA unchanged; nothing to update."
@@ -82,91 +80,195 @@ jobs:
           fetch-depth: 0
           submodules: false
 
-      - name: Capture base SHA
-        shell: bash
-        run: |
-          echo "BASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
       - name: Install dependencies
-        run: pip install cookiecutter
-
-      - name: Check if update branch already exists
+        shell: bash
         run: |
-          BRANCH="template-update-${{ needs.check-update.outputs.new_sha }}"
-          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
-            echo "::error ::Branch '$BRANCH' already exists. A template update PR may already be open."
-            exit 1
-          fi
+          pip install cookiecutter
 
-      - name: Clone template at new SHA
-        run: git clone '${{ inputs.template_repo }}' /tmp/template-source
-
-      - name: Run cookiecutter replay
+      - name: Prepare branch name
+        id: branch
+        shell: bash
         run: |
-          rm -rf ~/.cookiecutters/*
-          cookiecutter /tmp/template-source \
-            --replay-file .cookiecutter.json \
-            --overwrite-if-exists \
-            --output-dir /tmp/rendered
+          NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
+          BRANCH="template-update-${NEW_SHA}"
+          echo "name=$BRANCH" >> "$GITHUB_OUTPUT"
 
-      - name: Get rendered project directory name
-        id: rendered_dir
-        run: |
-          DIR=$(ls /tmp/rendered)
-          echo "name=$DIR" >> "$GITHUB_OUTPUT"
-
-      - name: Create template branch, merge, and push
-        id: merge
+      - name: Check if a template update PR is already open
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.WORKFLOW_TOKEN || github.token }}
         run: |
           set -euo pipefail
+          BRANCH="${{ steps.branch.outputs.name }}"
+          BASE="${{ inputs.repo_branch }}"
 
-          RENDERED="/tmp/rendered/${{ steps.rendered_dir.outputs.name }}"
-          OLD_SHA="${{ needs.check-update.outputs.old_sha }}"
+          URL=$(gh pr list --state open --head "$BRANCH" --base "$BASE" --json url --jq '.[0].url')
+          if [ -n "$URL" ] && [ "$URL" != "null" ]; then
+            echo "::error ::An open PR already exists for branch '$BRANCH': $URL"
+            exit 1
+          fi
+
+      - name: Check if update branch already exists
+        shell: bash
+        run: |
+          BRANCH="${{ steps.branch.outputs.name }}"
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "::error ::Branch '$BRANCH' already exists (possibly from an existing PR or a previous run)."
+            exit 1
+          fi
+
+      - name: Clone template repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/template-source || true
+          git clone '${{ inputs.template_repo }}' /tmp/template-source
+
+      - name: Render template at old SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/template-source
+          git checkout "${{ needs.check-update.outputs.old_sha }}"
+
+          rm -rf ~/.cookiecutters/* || true
+          rm -rf /tmp/rendered-old || true
+
+          cookiecutter /tmp/template-source \
+            --replay-file "$GITHUB_WORKSPACE/.cookiecutter.json" \
+            --overwrite-if-exists \
+            --output-dir /tmp/rendered-old
+
+      - name: Capture rendered OLD directory name
+        id: rendered_old
+        shell: bash
+        run: |
+          DIR=$(ls /tmp/rendered-old | head -n 1)
+          if [ -z "$DIR" ]; then
+            echo "::error ::No rendered output found in /tmp/rendered-old"
+            exit 1
+          fi
+          echo "name=$DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Render template at new SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/template-source
+          git checkout "${{ needs.check-update.outputs.new_sha }}"
+
+          rm -rf ~/.cookiecutters/* || true
+          rm -rf /tmp/rendered-new || true
+
+          cookiecutter /tmp/template-source \
+            --replay-file "$GITHUB_WORKSPACE/.cookiecutter.json" \
+            --overwrite-if-exists \
+            --output-dir /tmp/rendered-new
+
+      - name: Capture rendered NEW directory name
+        id: rendered_new
+        shell: bash
+        run: |
+          DIR=$(ls /tmp/rendered-new | head -n 1)
+          if [ -z "$DIR" ]; then
+            echo "::error ::No rendered output found in /tmp/rendered-new"
+            exit 1
+          fi
+          echo "name=$DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Create update branch from repo branch
+        shell: bash
+        run: |
+          git checkout -b "${{ steps.branch.outputs.name }}"
+
+      - name: Sync rendered NEW project into repo (non-destructive)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SRC="/tmp/rendered-new/${{ steps.rendered_new.outputs.name }}/"
+          DEST="./"
+
+          if [ "${{ inputs.update_workflows }}" = "true" ]; then
+            echo "Including .github/workflows updates from template"
+            rsync -a \
+              --exclude ".git/" \
+              "$SRC" "$DEST"
+          else
+            echo "Excluding .github/workflows updates from template"
+            rsync -a \
+              --exclude ".git/" \
+              --exclude ".github/workflows/" \
+              "$SRC" "$DEST"
+          fi
+
+      - name: Delete files removed from template (old → new)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OLD_DIR="/tmp/rendered-old/${{ steps.rendered_old.outputs.name }}"
+          NEW_DIR="/tmp/rendered-new/${{ steps.rendered_new.outputs.name }}"
+
+          echo "🔍 Detecting files removed from template..."
+
+          if [ ! -d "$OLD_DIR" ] || [ ! -d "$NEW_DIR" ]; then
+            echo "::error ::Rendered directories not found. OLD_DIR=$OLD_DIR NEW_DIR=$NEW_DIR"
+            exit 1
+          fi
+
+          (cd "$OLD_DIR" && find . -type f -print0) | while IFS= read -r -d '' file; do
+            rel_path="${file#./}"
+
+            if [ "${{ inputs.update_workflows }}" != "true" ] && [[ "$rel_path" == .github/workflows/* ]]; then
+              continue
+            fi
+
+            if [ ! -f "$NEW_DIR/$rel_path" ] && [ -f "$GITHUB_WORKSPACE/$rel_path" ]; then
+              echo "🗑️ Deleting: $rel_path"
+              rm -f "$GITHUB_WORKSPACE/$rel_path"
+            fi
+          done
+
+          cd "$GITHUB_WORKSPACE"
+          find . -type d -empty -not -path './.git/*' -delete 2>/dev/null || true
+
+      - name: Update .cookiecutter.json template_sha + prune deprecated vars
+        shell: bash
+        run: |
+          set -euo pipefail
           NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
-          BRANCH="template-update-${NEW_SHA}"
 
-          git config user.name "GitHub Actions Bot"
-          git config user.email "actions@github.com"
-
-          CURRENT_BRANCH="${{ inputs.repo_branch }}"
-
-          # Create an orphan branch with the rendered template content
-          git checkout --orphan template-rendered
-          git rm -rf --cached . >/dev/null 2>&1 || true
-          rm -rf $(ls -A | grep -v '^\.git$') || true
-
-          # Copy rendered content
-          cp -r "$RENDERED"/. .
-
-          # Preserve .cookiecutter.json from original branch with updated SHA
-          git show "${CURRENT_BRANCH}:.cookiecutter.json" > .cookiecutter.json
           jq ".cookiecutter.template_sha = \"${NEW_SHA}\"" \
             .cookiecutter.json > tmp.json && mv tmp.json .cookiecutter.json
 
-          #removed deprecated cookiecutter variables
-          python /tmp/template-source/hooks/prune_cookiecutter_json.py \
-          --cookie .cookiecutter.json \
-          --deprecations /tmp/template-source/hooks/deprecated.json
+          if [ -f "/tmp/template-source/hooks/prune_cookiecutter_json.py" ] && [ -f "/tmp/template-source/hooks/deprecated.json" ]; then
+            python /tmp/template-source/hooks/prune_cookiecutter_json.py \
+              --cookie .cookiecutter.json \
+              --deprecations /tmp/template-source/hooks/deprecated.json
+          else
+            echo "ℹ️ prune_cookiecutter_json.py or deprecated.json not found; skipping prune."
+          fi
 
-          #Format .NET code (C#) with CSharpier to reduce whitespace-only in PRs
+      - name: Format .NET code (CSharpier) to reduce whitespace-only diffs
+        shell: bash
+        run: |
+          set -euo pipefail
+
           if [ -f ".config/dotnet-tools.json" ]; then
-             echo "🧼 Restoring local tools (.config/dotnet-tools.json)"
-             dotnet tool restore
+            echo "🧼 Restoring local tools (.config/dotnet-tools.json)"
+            dotnet tool restore
           else
             echo "🧼 No tool manifest found; installing CSharpier globally"
             dotnet tool install -g csharpier || dotnet tool update -g csharpier
             export PATH="$PATH:$HOME/.dotnet/tools"
           fi
-          
-          # Only run if there are any C# files
+
           if git ls-files '*.cs' | grep -q '.'; then
             echo "🧼 Running CSharpier"
             dotnet csharpier .
@@ -174,72 +276,50 @@ jobs:
             echo "ℹ️ No .cs files found; skipping CSharpier."
           fi
 
+      - name: Commit changes (if any)
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          OLD_SHA="${{ needs.check-update.outputs.old_sha }}"
+          NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
+
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+
           git add -A
-          git commit -m "Template render at ${NEW_SHA}"
-    
-          TEMPLATE_COMMIT=$(git rev-parse HEAD)
 
-          # Switch back to repo branch and create update branch
-          git checkout "${CURRENT_BRANCH}"
-          git checkout -b "$BRANCH"
-
-          MERGE_HAD_CONFLICTS=false
-
-          # Attempt the merge; if it fails, keep conflict markers in working tree
-          if git merge "$TEMPLATE_COMMIT" --allow-unrelated-histories --no-edit -m "chore: update from template ${OLD_SHA} → ${NEW_SHA}"; then
-            MERGE_HAD_CONFLICTS=false
-          else
-            echo "::warning ::Merge had conflicts. They will be included in the PR for manual resolution."
-            MERGE_HAD_CONFLICTS=true
+          if git diff --cached --quiet; then
+            echo "No changes after render/sync; skipping PR."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-          # Conditionally revert .github/workflows back to base (omit workflow updates)
-          if [ "${{ inputs.update_workflows }}" != "true" ]; then
-            echo "update_workflows=false → reverting .github/workflows to base commit: $BASE_SHA"
-            if [ -d ".github/workflows" ]; then
-              git restore --source="$BASE_SHA" --staged --worktree .github/workflows || true
-            fi
-          fi
+          git commit -m "chore: update from template ${OLD_SHA} → ${NEW_SHA}"
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
 
-          # If merge had conflicts, commit AFTER optional workflow revert
-          if [ "$MERGE_HAD_CONFLICTS" = "true" ]; then
-            git add -A
-            git commit -m "chore: update from template ${OLD_SHA} → ${NEW_SHA} (with conflicts)"
-          else
-            # Merge succeeded and created a merge commit already.
-            # If we reverted workflows (or made any post-merge edits), commit those changes.
-            if ! git diff --cached --quiet; then
-              git add -A
-              git commit -m "chore: omit workflow updates"
-            fi
-          fi
+      - name: Push branch
+        if: steps.commit.outputs.has_changes == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push -u origin "${{ steps.branch.outputs.name }}"
 
-          # Ensure origin exists
-          if ! git remote get-url origin >/dev/null 2>&1; then
-            git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          fi
-
-          git push origin "$BRANCH"
-
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-          echo "merge_had_conflicts=$MERGE_HAD_CONFLICTS" >> "$GITHUB_OUTPUT"
-
-      - name: Create pull request
+      - name: Create pull request (no merge)
+        if: steps.commit.outputs.has_changes == 'true'
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.WORKFLOW_TOKEN || github.token }}
         run: |
+          set -euo pipefail
           OLD_SHA="${{ needs.check-update.outputs.old_sha }}"
           NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
-          BRANCH="${{ steps.merge.outputs.branch }}"
-          MERGE_HAD_CONFLICTS="${{ steps.merge.outputs.merge_had_conflicts }}"
+          BRANCH="${{ steps.branch.outputs.name }}"
 
-          if [ "$MERGE_HAD_CONFLICTS" = "true" ]; then
-            BODY="Updates from template SHA \`${OLD_SHA}\` → \`${NEW_SHA}\`
-
-          ⚠️ **Merge conflicts detected**: This PR contains conflict markers that need manual resolution. Search for \`<<<<<<<\` in the changed files."
-          else
-            BODY="Updates from template SHA \`${OLD_SHA}\` → \`${NEW_SHA}\`"
-          fi
+          BODY="Updates from template SHA \`${OLD_SHA}\` → \`${NEW_SHA}\`"
 
           gh pr create \
             --title "chore: update from template ${OLD_SHA} → ${NEW_SHA}" \
