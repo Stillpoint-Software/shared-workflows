@@ -250,77 +250,33 @@ jobs:
             echo "ℹ️ prune_cookiecutter_json.py or deprecated.json not found; skipping prune."
           fi
 
-      - name: Format C# code
+      - name: Format C# code (src projects)
         shell: bash
         run: |
           set -euo pipefail
-
-          shopt -s nullglob
-          CSPROJS=(src/*.csproj)
-          shopt -u nullglob
-
-          if [ "${#CSPROJS[@]}" -eq 0 ]; then
-            echo "ℹ️ No src/*.csproj found; skipping."
+      
+          if [ ! -d "src" ]; then
+            echo "ℹ️ No src directory; skipping."
             exit 0
           fi
-
+      
+          # Find all csproj under src/**, excluding bin/obj
+          mapfile -t CSPROJS < <(
+            find "src" -type f -name "*.csproj" \
+              -not -path "*/bin/*" -not -path "*/obj/*" \
+              | sort
+          )
+      
+          if [ "${#CSPROJS[@]}" -eq 0 ]; then
+            echo "ℹ️ No .csproj files found under src/; skipping."
+            exit 0
+          fi
+      
           for p in "${CSPROJS[@]}"; do
-            echo "🧼 Formatting $p"
+            echo "🧼 Restoring + formatting $p"
             dotnet restore "$p"
             dotnet format "$p" --no-restore
           done
-
-          - name: Remove extra blank lines
-            shell: pwsh
-            run: |
-              $root = Join-Path $PWD "src"
-          
-              if (-not (Test-Path $root)) {
-                Write-Host "ℹ️ No src directory; skipping."
-                exit 0
-              }
-          
-              $files = Get-ChildItem -Path $root -Recurse -File |
-                Where-Object {
-                  ($_.Extension -in @(".cs", ".csproj")) -and
-                  ($_.FullName -notmatch "[/\\]bin[/\\]") -and
-                  ($_.FullName -notmatch "[/\\]obj[/\\]")
-                }
-          
-              if (-not $files -or $files.Count -eq 0) {
-                Write-Host "ℹ️ No matching files under src/; skipping."
-                exit 0
-              }
-          
-              foreach ($f in $files) {
-                $text = Get-Content -Path $f.FullName -Raw
-          
-                # Preserve original line ending style (CRLF vs LF)
-                $usesCrlf = $text.Contains("`r`n")
-          
-                # Normalize to LF for processing
-                $normalized = $text -replace "`r`n", "`n"
-          
-                # Preserve whether file ended with a newline
-                $endsWithNewline = $normalized.EndsWith("`n")
-          
-                # Collapse 2+ blank lines where a "blank line" may contain spaces/tabs
-                # This turns 2+ blank lines into exactly 1 blank line
-                $collapsed = [regex]::Replace($normalized, "`n(?:[ `t]*`n){2,}", "`n`n")
-          
-                # Restore original newline-at-EOF behavior
-                if ($endsWithNewline -and -not $collapsed.EndsWith("`n")) { $collapsed += "`n" }
-                if (-not $endsWithNewline -and $collapsed.EndsWith("`n")) { $collapsed = $collapsed.TrimEnd("`n") }
-          
-                # Convert back to CRLF if that’s what the file used
-                if ($usesCrlf) {
-                  $collapsed = $collapsed -replace "`n", "`r`n"
-                }
-          
-                if ($collapsed -ne $text) {
-                  [System.IO.File]::WriteAllText($f.FullName, $collapsed, (New-Object System.Text.UTF8Encoding($false)))
-                }
-              }
 
       - name: Commit changes
         id: commit
