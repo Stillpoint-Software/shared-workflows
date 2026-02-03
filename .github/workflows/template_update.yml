@@ -11,11 +11,6 @@ on:
         description: 'Branch of the project repo to update'
         required: true
         type: string
-      update_workflows:
-        description: 'Include .github/workflows updates from template?'
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -72,6 +67,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
       - name: Checkout project repo
         uses: actions/checkout@v4
         with:
@@ -190,22 +190,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           SRC="/tmp/rendered-new/${{ steps.rendered_new.outputs.name }}/"
-          DEST="./"
-
-          if [ "${{ inputs.update_workflows }}" = "true" ]; then
-            echo "Including .github/workflows updates from template"
-            rsync -a \
-              --exclude ".git/" \
-              "$SRC" "$DEST"
-          else
-            echo "Excluding .github/workflows updates from template"
-            rsync -a \
-              --exclude ".git/" \
-              --exclude ".github/workflows/" \
-              "$SRC" "$DEST"
-          fi
+          rsync -a --exclude ".git/" "$SRC" "$GITHUB_WORKSPACE"
 
       - name: Delete files removed from template (old → new)
         shell: bash
@@ -224,11 +210,6 @@ jobs:
 
           (cd "$OLD_DIR" && find . -type f -print0) | while IFS= read -r -d '' file; do
             rel_path="${file#./}"
-
-            if [ "${{ inputs.update_workflows }}" != "true" ] && [[ "$rel_path" == .github/workflows/* ]]; then
-              continue
-            fi
-
             if [ ! -f "$NEW_DIR/$rel_path" ] && [ -f "$GITHUB_WORKSPACE/$rel_path" ]; then
               echo "🗑️ Deleting: $rel_path"
               rm -f "$GITHUB_WORKSPACE/$rel_path"
@@ -255,23 +236,33 @@ jobs:
             echo "ℹ️ prune_cookiecutter_json.py or deprecated.json not found; skipping prune."
           fi
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "10.0.x"
-          
-      - name: Format Code (src only)
+      - name: Format C# (dotnet format - all src projects)
         shell: bash
         run: |
           set -euo pipefail
-          for p in src/*.csproj; do
-            [ -e "$p" ] || { echo "ℹ️ No src/*.csproj; skipping."; exit 0; }
+
+          if [ ! -d "src" ]; then
+            echo "ℹ️ No src directory; skipping dotnet format."
+            exit 0
+          fi
+
+          shopt -s nullglob
+          CSPROJS=(src/*.csproj)
+          shopt -u nullglob
+
+          if [ "${#CSPROJS[@]}" -eq 0 ]; then
+            echo "ℹ️ No src/*.csproj found; skipping dotnet format."
+            exit 0
+          fi
+
+          for p in "${CSPROJS[@]}"; do
+            echo "🧼 Restoring and formatting $p"
             dotnet restore "$p"
             dotnet format whitespace "$p" --no-restore
             dotnet format style "$p" --no-restore
           done
-        
-      # format will NOT remove extra lines
+          
+      # Dotnet format will NOT do this
       - name: Remove extra blank lines (src - .cs and .csproj)
         shell: pwsh
         run: |
@@ -279,30 +270,25 @@ jobs:
             Write-Host "ℹ️ No src directory; skipping blank-line cleanup."
             exit 0
           }
-      
+
           $files = @()
           $files += Get-ChildItem -Path "src" -Recurse -Filter "*.cs" -File
           $files += Get-ChildItem -Path "src" -Recurse -Filter "*.csproj" -File
-      
+
           if (-not $files -or $files.Count -eq 0) {
             Write-Host "ℹ️ No .cs or .csproj files under src/; skipping blank-line cleanup."
             exit 0
           }
-      
+
           foreach ($f in $files) {
             $text = Get-Content -Path $f.FullName -Raw
-      
-            # Normalize to LF for processing
             $normalized = $text -replace "`r`n", "`n"
-      
-            # Collapse 3+ consecutive newlines to 2 (max one blank line)
             $collapsed = [regex]::Replace($normalized, "`n{3,}", "`n`n")
-      
             if ($collapsed -ne $normalized) {
               Set-Content -Path $f.FullName -Value $collapsed -NoNewline
             }
           }
-      
+
       - name: Commit changes (if any)
         id: commit
         shell: bash
@@ -324,7 +310,6 @@ jobs:
 
           git commit -m "chore: update from template ${OLD_SHA} → ${NEW_SHA}"
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
-
 
       - name: Push branch
         if: steps.commit.outputs.has_changes == 'true'
