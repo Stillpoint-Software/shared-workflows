@@ -194,12 +194,21 @@ jobs:
           
           echo ""
           echo "=== Running cookiecutter ==="
-          cookiecutter /tmp/template-source \
-            --replay \
-            --replay-file /tmp/template-source/.cookiecutter.json \
-            --overwrite-if-exists \
-            --output-dir /tmp/rendered \
-            --verbose
+          python << 'EOF'
+          import json
+          from cookiecutter.main import cookiecutter
+          
+          with open('/tmp/template-source/.cookiecutter.json') as f:
+              replay = json.load(f)
+          
+          cookiecutter(
+              '/tmp/template-source',
+              no_input=True,
+              extra_context=replay['cookiecutter'],
+              overwrite_if_exists=True,
+              output_dir='/tmp/rendered'
+          )
+          EOF
 
           DIR=$(ls /tmp/rendered | head -n 1 || true)
 
