@@ -165,32 +165,28 @@ jobs:
             echo "ℹ️ prune_cookiecutter_json.py or deprecated.json not found; skipping prune."
           fi
 
-      - name: Render template
-        id: render
-        env:
-          CC_TEMPLATE_UPDATE: "1"
-          CC_CONTEXT_FILE: "${{ github.workspace }}/.cookiecutter.json"
-        shell: bash
-        run: |
-          set -euo pipefail
+          - name: Render template
+            id: render
+            shell: bash
+            run: |
+              set -euo pipefail
+          
+              rm -rf ~/.cookiecutters/* || true
+              rm -rf /tmp/rendered || true
+          
+              cookiecutter /tmp/template-source \
+                --replay-file /tmp/template-source/.cookiecutter.json \
+                --overwrite-if-exists \
+                --output-dir /tmp/rendered
 
-          rm -rf ~/.cookiecutters/* || true
-          rm -rf /tmp/rendered || true
-
-          cookiecutter /tmp/template-source \
-            --replay-file /tmp/template-source/.cookiecutter.json \
-            --overwrite-if-exists \
-            --extra-context "$CTX" \
-            --output-dir /tmp/rendered
-
-          DIR=$(ls /tmp/rendered | head -n 1 || true)
-
-          if [ -z "$DIR" ]; then
-            echo "::error ::No rendered output found"
-            exit 1
-          fi
-
-          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+              DIR=$(ls /tmp/rendered | head -n 1 || true)
+    
+              if [ -z "$DIR" ]; then
+                echo "::error ::No rendered output found"
+                exit 1
+              fi
+    
+              echo "dir=$DIR" >> "$GITHUB_OUTPUT"
 
       - name: Create update branch
         shell: bash
