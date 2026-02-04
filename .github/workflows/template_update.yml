@@ -187,7 +187,6 @@ jobs:
           echo "=== Replay file used: /tmp/replay.json ==="
           cat /tmp/replay.json
 
-
       - name: Render template (replay from /tmp/replay.json)
         id: render
         shell: bash
@@ -215,7 +214,7 @@ jobs:
             --replay \
             --replay-file "$REPLAY_FILE" \
             --overwrite-if-exists \
-            --output-dir /tmp/rendered
+            --output-dir /tmp/rendered \
             --verbose
             
       - name: Create update branch
