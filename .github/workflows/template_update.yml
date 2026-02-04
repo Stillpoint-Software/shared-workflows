@@ -184,6 +184,9 @@ jobs:
           echo ""
           echo "=== Cookiecutter version ==="
           cookiecutter --version
+
+          echo "=== GITHUB_WORKSPACE .cookiecutter.json ==="
+          cat "$GITHUB_WORKSPACE/.cookiecutter.json"
           
           echo ""
           echo "=== Running cookiecutter ==="
