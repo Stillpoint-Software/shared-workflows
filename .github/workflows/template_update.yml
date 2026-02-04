@@ -173,6 +173,9 @@ jobs:
       
           rm -rf ~/.cookiecutters/* || true
           rm -rf /tmp/rendered || true
+
+          mkdir -p ~/.cookiecutter_replay
+          cp /tmp/template-source/.cookiecutter.json ~/.cookiecutter_replay/template-source.json
       
           cookiecutter /tmp/template-source \
             --replay-file /tmp/template-source/.cookiecutter.json \
