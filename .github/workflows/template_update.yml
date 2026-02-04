@@ -148,10 +148,11 @@ jobs:
           
           # Clone template at new SHA
           rm -rf /tmp/template-source || true
-          git clone '${{ inputs.repo_branch }}' /tmp/template-source
+          git clone '${{ inputs.template_repo }}' /tmp/template-source
           cd /tmp/template-source
           git checkout "${{ needs.check-update.outputs.new_sha }}"
-          
+
+          echo "GITHUB_WORKSPACE is: $GITHUB_WORKSPACE"
           # Copy .cookiecutter.json from project repo to template
           cp "$GITHUB_WORKSPACE/.cookiecutter.json" /tmp/template-source/.cookiecutter.json
           
