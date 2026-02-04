@@ -149,17 +149,14 @@ jobs:
           rm -rf /tmp/template-source || true
           rm -f /tmp/replay.json || true
 
-          # Clone template at new SHA
           git clone '${{ inputs.template_repo }}' /tmp/template-source
-          cd /tmp/template-source
-          git checkout "${{ needs.check-update.outputs.new_sha }}"
 
           echo "GITHUB_WORKSPACE is: $GITHUB_WORKSPACE"
 
           # Copy repo answers -> dedicated replay file
           cp "$GITHUB_WORKSPACE/.cookiecutter.json" /tmp/replay.json
 
-          # Prune deprecated vars (STRICT-BUT-SAFE)
+          # Optional prune
           if [ -f "/tmp/template-source/hooks/prune_cookiecutter_json.py" ] && [ -f "/tmp/template-source/hooks/deprecated.json" ]; then
             echo "🧹 Pruning deprecated variables"
             set +e
@@ -186,12 +183,10 @@ jobs:
           echo "=== Replay file used: /tmp/replay.json ==="
           cat /tmp/replay.json
 
-      # render OUTSIDE the repo, then detect the single generated project root folder.
-      - name: Render template (replay to temp dir)
-        id: render
+      - name: Render template at OLD_SHA
+        id: render_old
         shell: bash
         env:
-          # Extra signal(s) for your hooks to know it's running in Actions
           CI: "true"
           COOKIECUTTER_NO_INPUT: "1"
           STILLPOINT_TEMPLATE_RUNNER: "github_actions"
@@ -199,44 +194,67 @@ jobs:
         run: |
           set -euo pipefail
 
+          OLD_SHA="${{ needs.check-update.outputs.old_sha }}"
           REPLAY_FILE="/tmp/replay.json"
-          if [ ! -f "$REPLAY_FILE" ]; then
-            echo "::error ::Replay file not found: $REPLAY_FILE"
-            ls -la /tmp || true
-            exit 1
-          fi
-
-          if ! jq -e '.cookiecutter' "$REPLAY_FILE" >/dev/null 2>&1; then
-            echo "::error ::Replay file exists but is not valid JSON with a top-level .cookiecutter object: $REPLAY_FILE"
-            sed -n '1,200p' "$REPLAY_FILE" || true
-            exit 1
-          fi
 
           rm -rf ~/.cookiecutters/* || true
-          rm -rf /tmp/rendered || true
-          mkdir -p /tmp/rendered
+          rm -rf /tmp/rendered_old || true
+          mkdir -p /tmp/rendered_old
 
-          echo "=== Running cookiecutter with replay-file (rendering outside repo) ==="
+          cd /tmp/template-source
+          git checkout -f "$OLD_SHA"
+
           cookiecutter /tmp/template-source \
             --replay \
             --replay-file "$REPLAY_FILE" \
             --overwrite-if-exists \
-            --output-dir /tmp/rendered \
+            --output-dir /tmp/rendered_old \
             --verbose
 
-          echo "=== Render dir contents ==="
-          ls -la /tmp/rendered
-          echo "=== Top 2 levels ==="
-          find /tmp/rendered -maxdepth 2 -type d -print
-
-          # Cookiecutter typically generates exactly ONE folder under output-dir (the project root).
-          PROJECT_ROOT="$(find /tmp/rendered -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
+          PROJECT_ROOT="$(find /tmp/rendered_old -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
           if [ -z "$PROJECT_ROOT" ]; then
-            echo "::error ::Could not locate rendered project root under /tmp/rendered"
+            echo "::error ::Could not locate rendered project root under /tmp/rendered_old"
+            find /tmp/rendered_old -maxdepth 2 -type d -print || true
             exit 1
           fi
 
-          echo "Detected rendered project root: $PROJECT_ROOT"
+          echo "project_root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Render template at NEW_SHA
+        id: render_new
+        shell: bash
+        env:
+          CI: "true"
+          COOKIECUTTER_NO_INPUT: "1"
+          STILLPOINT_TEMPLATE_RUNNER: "github_actions"
+          TEMPLATE_UPDATE_RUNNER: "github_actions"
+        run: |
+          set -euo pipefail
+
+          NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
+          REPLAY_FILE="/tmp/replay.json"
+
+          rm -rf ~/.cookiecutters/* || true
+          rm -rf /tmp/rendered_new || true
+          mkdir -p /tmp/rendered_new
+
+          cd /tmp/template-source
+          git checkout -f "$NEW_SHA"
+
+          cookiecutter /tmp/template-source \
+            --replay \
+            --replay-file "$REPLAY_FILE" \
+            --overwrite-if-exists \
+            --output-dir /tmp/rendered_new \
+            --verbose
+
+          PROJECT_ROOT="$(find /tmp/rendered_new -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
+          if [ -z "$PROJECT_ROOT" ]; then
+            echo "::error ::Could not locate rendered project root under /tmp/rendered_new"
+            find /tmp/rendered_new -maxdepth 2 -type d -print || true
+            exit 1
+          fi
+
           echo "project_root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
 
       - name: Create update branch
@@ -245,37 +263,58 @@ jobs:
           set -euo pipefail
           git checkout -b "${{ steps.branch.outputs.name }}"
 
-      # (trailing slash on source) to avoid “project folder + src folder” nesting.
-      - name: Sync rendered project into repo
+      - name: Apply delta (OLD render → NEW render) to repo
         shell: bash
         run: |
           set -euo pipefail
 
-          SRC="${{ steps.render.outputs.project_root }}/"
+          OLD_ROOT="${{ steps.render_old.outputs.project_root }}"
+          NEW_ROOT="${{ steps.render_new.outputs.project_root }}"
 
-          echo "=== Rendered project root ==="
-          ls -la "${{ steps.render.outputs.project_root }}"
-          echo "=== Repo root before sync ==="
-          pwd
-          ls -la
+          echo "OLD_ROOT=$OLD_ROOT"
+          echo "NEW_ROOT=$NEW_ROOT"
 
-          if [ "${{ steps.auth.outputs.enabled }}" = "true" ]; then
-            echo "Including workflow updates from template"
-            rsync -a --delete --exclude ".git/" "$SRC" "$GITHUB_WORKSPACE/"
-          else
-            echo "Excluding workflow updates from template"
-            rsync -a --delete --exclude ".git/" --exclude ".github/workflows/" "$SRC" "$GITHUB_WORKSPACE/"
+          # Excludes depending on update_workflows
+          RSYNC_EXCLUDES=(--exclude ".git/")
+          DELETE_EXCLUDES=()
+
+          if [ "${{ steps.auth.outputs.enabled }}" != "true" ]; then
+            RSYNC_EXCLUDES+=(--exclude ".github/workflows/")
+            DELETE_EXCLUDES+=(".github/workflows/*")
           fi
 
-          echo "=== Repo root after sync ==="
-          ls -la
+          # 1) Copy only files that changed between OLD and NEW renders
+          # --compare-dest makes rsync skip files identical to OLD_ROOT
+          rsync -a --checksum \
+            "${RSYNC_EXCLUDES[@]}" \
+            --compare-dest="$OLD_ROOT/" \
+            "$NEW_ROOT/" \
+            "$GITHUB_WORKSPACE/"
+
+          # 2) Delete files that existed in OLD render but are gone in NEW render
+          # (only deletes files that currently exist in the repo)
+          cd "$OLD_ROOT"
+          while IFS= read -r rel; do
+            [ -z "$rel" ] && continue
+
+            # skip excluded paths
+            if [ "${{ steps.auth.outputs.enabled }}" != "true" ] && [[ "$rel" == .github/workflows/* ]]; then
+              continue
+            fi
+
+            if [ ! -e "$NEW_ROOT/$rel" ]; then
+              if [ -e "$GITHUB_WORKSPACE/$rel" ]; then
+                echo "Deleting removed-by-template: $rel"
+                rm -f "$GITHUB_WORKSPACE/$rel" || true
+              fi
+            fi
+          done < <(find . -type f -print | sed 's|^\./||')
 
       - name: Update .cookiecutter.json
         shell: bash
         run: |
           set -euo pipefail
 
-          # Copy pruned replay file back to repo and update template_sha
           cp /tmp/replay.json "$GITHUB_WORKSPACE/.cookiecutter.json"
 
           NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
