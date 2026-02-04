@@ -172,7 +172,6 @@ jobs:
             echo "$PRUNE_OUT"
 
             if [ $PRUNE_CODE -ne 0 ]; then
-              # If the script exits non-zero but clearly indicates it pruned keys, treat as success
               if echo "$PRUNE_OUT" | grep -qE "Pruned deprecated (cookiecutter )?keys"; then
                 echo "ℹ️ prune script exited $PRUNE_CODE after pruning keys; continuing."
               else
@@ -187,9 +186,16 @@ jobs:
           echo "=== Replay file used: /tmp/replay.json ==="
           cat /tmp/replay.json
 
-      - name: Render template (replay from /tmp/replay.json)
+      # render OUTSIDE the repo, then detect the single generated project root folder.
+      - name: Render template (replay to temp dir)
         id: render
         shell: bash
+        env:
+          # Extra signal(s) for your hooks to know it's running in Actions
+          CI: "true"
+          COOKIECUTTER_NO_INPUT: "1"
+          STILLPOINT_TEMPLATE_RUNNER: "github_actions"
+          TEMPLATE_UPDATE_RUNNER: "github_actions"
         run: |
           set -euo pipefail
 
@@ -208,39 +214,61 @@ jobs:
 
           rm -rf ~/.cookiecutters/* || true
           rm -rf /tmp/rendered || true
+          mkdir -p /tmp/rendered
 
-          echo "=== Running cookiecutter with replay-file ==="
+          echo "=== Running cookiecutter with replay-file (rendering outside repo) ==="
           cookiecutter /tmp/template-source \
             --replay \
             --replay-file "$REPLAY_FILE" \
             --overwrite-if-exists \
             --output-dir /tmp/rendered \
             --verbose
-            
+
+          echo "=== Render dir contents ==="
+          ls -la /tmp/rendered
+          echo "=== Top 2 levels ==="
+          find /tmp/rendered -maxdepth 2 -type d -print
+
+          # Cookiecutter typically generates exactly ONE folder under output-dir (the project root).
+          PROJECT_ROOT="$(find /tmp/rendered -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
+          if [ -z "$PROJECT_ROOT" ]; then
+            echo "::error ::Could not locate rendered project root under /tmp/rendered"
+            exit 1
+          fi
+
+          echo "Detected rendered project root: $PROJECT_ROOT"
+          echo "project_root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
+
       - name: Create update branch
         shell: bash
         run: |
           set -euo pipefail
           git checkout -b "${{ steps.branch.outputs.name }}"
 
+      # (trailing slash on source) to avoid “project folder + src folder” nesting.
       - name: Sync rendered project into repo
         shell: bash
         run: |
           set -euo pipefail
-          SRC="/tmp/rendered/${{ steps.render.outputs.dir }}/"
 
-          echo "=== Rendered output root ==="
-          ls -la "/tmp/rendered/${{ steps.render.outputs.dir }}/"
-          echo "=== Top 2 levels ==="
-          find "/tmp/rendered/${{ steps.render.outputs.dir }}/" -maxdepth 2 -type d -print
+          SRC="${{ steps.render.outputs.project_root }}/"
+
+          echo "=== Rendered project root ==="
+          ls -la "${{ steps.render.outputs.project_root }}"
+          echo "=== Repo root before sync ==="
+          pwd
+          ls -la
 
           if [ "${{ steps.auth.outputs.enabled }}" = "true" ]; then
             echo "Including workflow updates from template"
-            rsync -a --exclude ".git/" "$SRC" "$GITHUB_WORKSPACE"
+            rsync -a --delete --exclude ".git/" "$SRC" "$GITHUB_WORKSPACE/"
           else
             echo "Excluding workflow updates from template"
-            rsync -a --exclude ".git/" --exclude ".github/workflows/" "$SRC" "$GITHUB_WORKSPACE"
+            rsync -a --delete --exclude ".git/" --exclude ".github/workflows/" "$SRC" "$GITHUB_WORKSPACE/"
           fi
+
+          echo "=== Repo root after sync ==="
+          ls -la
 
       - name: Update .cookiecutter.json
         shell: bash
