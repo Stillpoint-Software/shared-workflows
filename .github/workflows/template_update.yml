@@ -167,6 +167,9 @@ jobs:
 
       - name: Render template
         id: render
+        env:
+          CC_TEMPLATE_UPDATE: "1"
+          CC_CONTEXT_FILE: "${{ github.workspace }}/.cookiecutter.json"
         shell: bash
         run: |
           set -euo pipefail
@@ -177,6 +180,7 @@ jobs:
           cookiecutter /tmp/template-source \
             --replay-file /tmp/template-source/.cookiecutter.json \
             --overwrite-if-exists \
+            --extra-context "$CTX" \
             --output-dir /tmp/rendered
 
           DIR=$(ls /tmp/rendered | head -n 1 || true)
