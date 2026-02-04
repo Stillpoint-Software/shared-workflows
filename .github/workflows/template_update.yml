@@ -176,6 +176,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          REPLAY_FILE="/tmp/template-source/.cookiecutter.json"
+          
+          if [ ! -f "$REPLAY_FILE" ]; then
+            echo "::error ::Replay file not found: $REPLAY_FILE"
+            echo "Contents of /tmp/template-source:"
+            ls -la /tmp/template-source || true
+            exit 1
+          fi
+          
+          if ! jq -e '.cookiecutter' "$REPLAY_FILE" >/dev/null 2>&1; then
+            echo "::error ::Replay file exists but is not valid JSON with a top-level .cookiecutter object: $REPLAY_FILE"
+            echo "First 200 lines:"
+            sed -n '1,200p' "$REPLAY_FILE" || true
+            exit 1
+          fi
+          
+          echo "✅ Replay file found and looks valid: $REPLAY_FILE"
           
           rm -rf ~/.cookiecutters/* || true
           rm -rf /tmp/rendered || true
