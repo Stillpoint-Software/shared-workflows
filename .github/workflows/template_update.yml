@@ -170,15 +170,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-      
+          
           rm -rf ~/.cookiecutters/* || true
           rm -rf /tmp/rendered || true
-
+          
+          echo "=== Replay file contents ==="
+          cat /tmp/template-source/.cookiecutter.json
+          
+          echo ""
+          echo "=== Template cookiecutter.json ==="
+          cat /tmp/template-source/cookiecutter.json
+          
+          echo ""
+          echo "=== Cookiecutter version ==="
+          cookiecutter --version
+          
+          echo ""
+          echo "=== Running cookiecutter ==="
           cookiecutter /tmp/template-source \
-          --replay \
-          --replay-file /tmp/template-source/.cookiecutter.json \
-          --overwrite-if-exists \
-          --output-dir /tmp/rendered
+            --replay \
+            --replay-file /tmp/template-source/.cookiecutter.json \
+            --overwrite-if-exists \
+            --output-dir /tmp/rendered \
+            --verbose
 
           DIR=$(ls /tmp/rendered | head -n 1 || true)
 
