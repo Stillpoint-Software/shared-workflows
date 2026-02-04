@@ -216,6 +216,7 @@ jobs:
             --replay-file "$REPLAY_FILE" \
             --overwrite-if-exists \
             --output-dir /tmp/rendered
+            --verbose
             
       - name: Create update branch
         shell: bash
@@ -228,6 +229,11 @@ jobs:
         run: |
           set -euo pipefail
           SRC="/tmp/rendered/${{ steps.render.outputs.dir }}/"
+
+          echo "=== Rendered output root ==="
+          ls -la "/tmp/rendered/${{ steps.render.outputs.dir }}/"
+          echo "=== Top 2 levels ==="
+          find "/tmp/rendered/${{ steps.render.outputs.dir }}/" -maxdepth 2 -type d -print
 
           if [ "${{ steps.auth.outputs.enabled }}" = "true" ]; then
             echo "Including workflow updates from template"
