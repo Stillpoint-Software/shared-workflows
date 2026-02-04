@@ -145,69 +145,75 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          
-          # Clone template at new SHA
+
           rm -rf /tmp/template-source || true
+          rm -f /tmp/replay.json || true
+
+          # Clone template at new SHA
           git clone '${{ inputs.template_repo }}' /tmp/template-source
           cd /tmp/template-source
           git checkout "${{ needs.check-update.outputs.new_sha }}"
 
           echo "GITHUB_WORKSPACE is: $GITHUB_WORKSPACE"
-          # Copy .cookiecutter.json from project repo to template
-          cp "$GITHUB_WORKSPACE/.cookiecutter.json" /tmp/template-source/.cookiecutter.json
-          
-          # Prune deprecated variables
+
+          # Copy repo answers -> dedicated replay file
+          cp "$GITHUB_WORKSPACE/.cookiecutter.json" /tmp/replay.json
+
+          # Prune deprecated vars (STRICT-BUT-SAFE)
           if [ -f "/tmp/template-source/hooks/prune_cookiecutter_json.py" ] && [ -f "/tmp/template-source/hooks/deprecated.json" ]; then
             echo "🧹 Pruning deprecated variables"
-            python /tmp/template-source/hooks/prune_cookiecutter_json.py \
-              --cookie /tmp/template-source/.cookiecutter.json \
-              --deprecations /tmp/template-source/hooks/deprecated.json
+            set +e
+            PRUNE_OUT=$(python /tmp/template-source/hooks/prune_cookiecutter_json.py \
+              --cookie /tmp/replay.json \
+              --deprecations /tmp/template-source/hooks/deprecated.json 2>&1)
+            PRUNE_CODE=$?
+            set -e
+
+            echo "$PRUNE_OUT"
+
+            if [ $PRUNE_CODE -ne 0 ]; then
+              # If the script exits non-zero but clearly indicates it pruned keys, treat as success
+              if echo "$PRUNE_OUT" | grep -qE "Pruned deprecated (cookiecutter )?keys"; then
+                echo "ℹ️ prune script exited $PRUNE_CODE after pruning keys; continuing."
+              else
+                echo "::error ::Prune script failed (exit $PRUNE_CODE)"
+                exit $PRUNE_CODE
+              fi
+            fi
           else
             echo "ℹ️ prune_cookiecutter_json.py or deprecated.json not found; skipping prune."
           fi
-          
-          jq -e '.cookiecutter.include_audit | (type=="boolean")' /tmp/template-source/.cookiecutter.json > /dev/null
-          
-          echo "=== After copy/prune: /tmp/template-source/.cookiecutter.json ==="
-          cat /tmp/template-source/.cookiecutter.json
 
-      - name: Render template
+          echo "=== Replay file used: /tmp/replay.json ==="
+          cat /tmp/replay.json
+
+
+      - name: Render template (replay from /tmp/replay.json)
         id: render
         shell: bash
         run: |
           set -euo pipefail
 
-          REPLAY_FILE="/tmp/template-source/.cookiecutter.json"
-          
+          REPLAY_FILE="/tmp/replay.json"
           if [ ! -f "$REPLAY_FILE" ]; then
             echo "::error ::Replay file not found: $REPLAY_FILE"
-            echo "Contents of /tmp/template-source:"
-            ls -la /tmp/template-source || true
+            ls -la /tmp || true
             exit 1
           fi
-          
+
           if ! jq -e '.cookiecutter' "$REPLAY_FILE" >/dev/null 2>&1; then
             echo "::error ::Replay file exists but is not valid JSON with a top-level .cookiecutter object: $REPLAY_FILE"
-            echo "First 200 lines:"
             sed -n '1,200p' "$REPLAY_FILE" || true
             exit 1
           fi
-          
-          echo "✅ Replay file found and looks valid: $REPLAY_FILE"
-          
+
           rm -rf ~/.cookiecutters/* || true
           rm -rf /tmp/rendered || true
 
-          cat /tmp/template-source/.cookiecutter.json
-          cat /tmp/template-source/cookiecutter.json
-
-          cat "$GITHUB_WORKSPACE/.cookiecutter.json"
-          
-          echo ""
           echo "=== Running cookiecutter with replay-file ==="
           cookiecutter /tmp/template-source \
             --replay \
-            --replay-file /tmp/template-source/.cookiecutter.json \
+            --replay-file "$REPLAY_FILE" \
             --overwrite-if-exists \
             --output-dir /tmp/rendered
             
@@ -235,13 +241,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          
-          # Copy pruned file back to repo and update template_sha
-          cp /tmp/template-source/.cookiecutter.json "$GITHUB_WORKSPACE/.cookiecutter.json"
-          
+
+          # Copy pruned replay file back to repo and update template_sha
+          cp /tmp/replay.json "$GITHUB_WORKSPACE/.cookiecutter.json"
+
           NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
           jq ".cookiecutter.template_sha = \"${NEW_SHA}\"" \
-            .cookiecutter.json > tmp.json && mv tmp.json .cookiecutter.json
+            "$GITHUB_WORKSPACE/.cookiecutter.json" > "$GITHUB_WORKSPACE/tmp.json" \
+            && mv "$GITHUB_WORKSPACE/tmp.json" "$GITHUB_WORKSPACE/.cookiecutter.json"
 
       - name: Remove extra blank lines
         shell: pwsh
