@@ -127,6 +127,8 @@ jobs:
           GH_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+
           BRANCH="${{ steps.branch.outputs.name }}"
           BASE="${{ inputs.repo_branch }}"
 
@@ -172,17 +174,17 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          
+
           replay_path = Path("/tmp/replay.raw.json")
           template_cookiecutter = Path("/tmp/template-source/cookiecutter.json")
-          
+
           replay = json.loads(replay_path.read_text(encoding="utf-8"))
           ctx = replay.get("cookiecutter", {})
-          
+
           tmpl = json.loads(template_cookiecutter.read_text(encoding="utf-8"))
-          
+
           SPECIAL = {"__prompts__", "_copy_without_render", "_jinja2_env_vars"}
-          
+
           def choose_default(v):
               if isinstance(v, list) and v:
                   low = [str(x).lower() for x in v]
@@ -192,7 +194,7 @@ jobs:
                       return v[low.index("development")]
                   return v[0]
               return v
-          
+
           added = {}
           for k, v in tmpl.items():
               if k in SPECIAL:
@@ -200,10 +202,10 @@ jobs:
               if k not in ctx:
                   ctx[k] = choose_default(v)
                   added[k] = ctx[k]
-          
+
           replay["cookiecutter"] = ctx
           replay_path.write_text(json.dumps(replay, indent=2), encoding="utf-8")
-          
+
           print("Backfilled missing keys for OLD template:")
           for k, v in added.items():
               print(f"  - {k}: {v!r}")
@@ -250,7 +252,6 @@ jobs:
           cd /tmp/template-source
           git checkout -f "$NEW_SHA"
 
-          # Reset pruned replay from raw each time
           cp /tmp/replay.raw.json /tmp/replay.pruned.json
 
           if [ -f "/tmp/template-source/hooks/prune_cookiecutter_json.py" ] && [ -f "/tmp/template-source/hooks/deprecated.json" ]; then
@@ -301,18 +302,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
           git checkout -b "${{ steps.branch.outputs.name }}"
 
       - name: Apply delta (OLD render → NEW render) to repo
         shell: bash
         run: |
           set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
 
           OLD_ROOT="${{ steps.render_old.outputs.project_root }}"
           NEW_ROOT="${{ steps.render_new.outputs.project_root }}"
-
-          echo "OLD_ROOT=$OLD_ROOT"
-          echo "NEW_ROOT=$NEW_ROOT"
 
           RSYNC_EXCLUDES=(--exclude ".git/")
 
@@ -341,12 +341,14 @@ jobs:
             fi
           done < <(find . -type f -print)
 
+          cd "$GITHUB_WORKSPACE"
+
       - name: Update .cookiecutter.json
         shell: bash
         run: |
           set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
 
-          # Persist pruned replay back to project and update template_sha
           cp /tmp/replay.pruned.json "$GITHUB_WORKSPACE/.cookiecutter.json"
 
           NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
@@ -359,6 +361,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+
           OLD_SHA="${{ needs.check-update.outputs.old_sha }}"
           NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
 
@@ -382,6 +386,8 @@ jobs:
           GH_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+
           OLD_SHA="${{ needs.check-update.outputs.old_sha }}"
           NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
           BRANCH="${{ steps.branch.outputs.name }}"
