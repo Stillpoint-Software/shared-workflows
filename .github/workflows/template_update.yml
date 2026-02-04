@@ -311,6 +311,7 @@ jobs:
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
       
+          # If .git is missing here, commit will never work—fail early with context
           if [ ! -e ".git" ]; then
             echo "::error ::.git is missing in workspace before delta apply."
             pwd
@@ -318,9 +319,17 @@ jobs:
             exit 1
           fi
       
+          restore_git() {
+            cd "$GITHUB_WORKSPACE"
+            if [ -e /tmp/workspace_git ]; then
+              rm -rf .git || true
+              mv /tmp/workspace_git .git
+            fi
+          }
+      
           rm -rf /tmp/workspace_git || true
           mv .git /tmp/workspace_git
-          trap 'cd "$GITHUB_WORKSPACE"; [ -e /tmp/workspace_git ] && mv /tmp/workspace_git .git' EXIT
+          trap restore_git EXIT
       
           OLD_ROOT="${{ steps.render_old.outputs.project_root }}"
           NEW_ROOT="${{ steps.render_new.outputs.project_root }}"
@@ -348,6 +357,7 @@ jobs:
             [ -z "$rel" ] && continue
             rel="${rel#./}"
       
+            # skip excluded paths
             if [ "${{ steps.auth.outputs.enabled }}" != "true" ] && [[ "$rel" == .github/workflows/* ]]; then
               continue
             fi
@@ -367,6 +377,10 @@ jobs:
       
           # Never include template-only scaffolding
           rm -rf "$GITHUB_WORKSPACE/templates" || true
+      
+          # Restore .git before running any git commands
+          restore_git
+          trap - EXIT
       
           git rev-parse --is-inside-work-tree
 
