@@ -177,19 +177,10 @@ jobs:
           
           rm -rf ~/.cookiecutters/* || true
           rm -rf /tmp/rendered || true
-          
-          echo "=== Replay file contents ==="
-          cat /tmp/template-source/.cookiecutter.json
-          
-          echo ""
-          echo "=== Template cookiecutter.json ==="
-          cat /tmp/template-source/cookiecutter.json
-          
-          echo ""
-          echo "=== Cookiecutter version ==="
-          cookiecutter --version
 
-          echo "=== GITHUB_WORKSPACE .cookiecutter.json ==="
+          cat /tmp/template-source/.cookiecutter.json
+          cat /tmp/template-source/cookiecutter.json
+
           cat "$GITHUB_WORKSPACE/.cookiecutter.json"
           
           echo ""
@@ -201,10 +192,19 @@ jobs:
           with open('/tmp/template-source/.cookiecutter.json') as f:
               replay = json.load(f)
           
+          context = replay['cookiecutter']
+          
+          # Convert string booleans to actual booleans
+          for key, value in context.items():
+              if value == "True":
+                  context[key] = True
+              elif value == "False":
+                  context[key] = False
+          
           cookiecutter(
               '/tmp/template-source',
               no_input=True,
-              extra_context=replay['cookiecutter'],
+              extra_context=context,
               overwrite_if_exists=True,
               output_dir='/tmp/rendered'
           )
