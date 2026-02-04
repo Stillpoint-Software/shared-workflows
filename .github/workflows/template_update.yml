@@ -302,19 +302,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd "$GITHUB_WORKSPACE"
-          git checkout -b "${{ steps.branch.outputs.name }}"
+          unset GIT_DIR GIT_WORK_TREE || true
+          git -C "$GITHUB_WORKSPACE" checkout -b "${{ steps.branch.outputs.name }}"
 
-      - name: Apply delta (OLD render → NEW render) to repo
+      - name: Apply delta (OLD render → NEW render) to repo (protect .git)
         shell: bash
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
 
+          # If .git is missing here, commit will never work—fail early with context
+          if [ ! -e ".git" ]; then
+            echo "::error ::.git is missing in workspace before delta apply."
+            pwd
+            ls -la
+            exit 1
+          fi
+
+          rm -rf /tmp/workspace_git || true
+          mv .git /tmp/workspace_git
+
           OLD_ROOT="${{ steps.render_old.outputs.project_root }}"
           NEW_ROOT="${{ steps.render_new.outputs.project_root }}"
 
-          RSYNC_EXCLUDES=(--exclude ".git/")
+          RSYNC_EXCLUDES=(--exclude ".git" --exclude ".git/")
 
           if [ "${{ steps.auth.outputs.enabled }}" != "true" ]; then
             RSYNC_EXCLUDES+=(--exclude ".github/workflows/")
@@ -342,13 +353,14 @@ jobs:
           done < <(find . -type f -print)
 
           cd "$GITHUB_WORKSPACE"
+          mv /tmp/workspace_git .git
+
+          git rev-parse --is-inside-work-tree
 
       - name: Update .cookiecutter.json
         shell: bash
         run: |
           set -euo pipefail
-          cd "$GITHUB_WORKSPACE"
-
           cp /tmp/replay.pruned.json "$GITHUB_WORKSPACE/.cookiecutter.json"
 
           NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
@@ -361,22 +373,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd "$GITHUB_WORKSPACE"
+          unset GIT_DIR GIT_WORK_TREE || true
 
           OLD_SHA="${{ needs.check-update.outputs.old_sha }}"
           NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
 
-          git config user.name "GitHub Actions Bot"
-          git config user.email "actions@github.com"
-          git add -A
+          git -C "$GITHUB_WORKSPACE" config user.name "GitHub Actions Bot"
+          git -C "$GITHUB_WORKSPACE" config user.email "actions@github.com"
+          git -C "$GITHUB_WORKSPACE" add -A
 
-          if git diff --cached --quiet; then
+          if git -C "$GITHUB_WORKSPACE" diff --cached --quiet; then
             echo "No changes; skipping PR."
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          git commit -m "chore: update from template ${OLD_SHA} → ${NEW_SHA}"
+          git -C "$GITHUB_WORKSPACE" commit -m "chore: update from template ${OLD_SHA} → ${NEW_SHA}"
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
 
       - name: Push branch and create PR
@@ -386,13 +398,13 @@ jobs:
           GH_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           set -euo pipefail
-          cd "$GITHUB_WORKSPACE"
+          unset GIT_DIR GIT_WORK_TREE || true
 
           OLD_SHA="${{ needs.check-update.outputs.old_sha }}"
           NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
           BRANCH="${{ steps.branch.outputs.name }}"
 
-          git push -u origin "$BRANCH"
+          git -C "$GITHUB_WORKSPACE" push -u origin "$BRANCH"
 
           gh pr create \
             --title "chore: update from template ${OLD_SHA} → ${NEW_SHA}" \
