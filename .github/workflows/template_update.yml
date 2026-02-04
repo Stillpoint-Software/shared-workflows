@@ -141,49 +141,75 @@ jobs:
             exit 1
           fi
 
-      - name: Clone template and prepare cookiecutter replay file
+      - name: Clone template and prepare cookiecutter replay files
         shell: bash
         run: |
           set -euo pipefail
 
           rm -rf /tmp/template-source || true
-          rm -f /tmp/replay.json || true
+          rm -f /tmp/replay.raw.json || true
+          rm -f /tmp/replay.pruned.json || true
 
           git clone '${{ inputs.template_repo }}' /tmp/template-source
 
           echo "GITHUB_WORKSPACE is: $GITHUB_WORKSPACE"
 
-          # Copy repo answers -> dedicated replay file
-          cp "$GITHUB_WORKSPACE/.cookiecutter.json" /tmp/replay.json
+          cp "$GITHUB_WORKSPACE/.cookiecutter.json" /tmp/replay.raw.json
+          cp /tmp/replay.raw.json /tmp/replay.pruned.json
 
-          # Optional prune
-          if [ -f "/tmp/template-source/hooks/prune_cookiecutter_json.py" ] && [ -f "/tmp/template-source/hooks/deprecated.json" ]; then
-            echo "🧹 Pruning deprecated variables"
-            set +e
-            PRUNE_OUT=$(python /tmp/template-source/hooks/prune_cookiecutter_json.py \
-              --cookie /tmp/replay.json \
-              --deprecations /tmp/template-source/hooks/deprecated.json 2>&1)
-            PRUNE_CODE=$?
-            set -e
+          echo "=== Raw replay file used: /tmp/replay.raw.json ==="
+          cat /tmp/replay.raw.json
 
-            echo "$PRUNE_OUT"
+      - name: Backfill replay for OLD template (avoid prompts)
+        shell: bash
+        run: |
+          set -euo pipefail
+          OLD_SHA="${{ needs.check-update.outputs.old_sha }}"
 
-            if [ $PRUNE_CODE -ne 0 ]; then
-              if echo "$PRUNE_OUT" | grep -qE "Pruned deprecated (cookiecutter )?keys"; then
-                echo "ℹ️ prune script exited $PRUNE_CODE after pruning keys; continuing."
-              else
-                echo "::error ::Prune script failed (exit $PRUNE_CODE)"
-                exit $PRUNE_CODE
-              fi
-            fi
-          else
-            echo "ℹ️ prune_cookiecutter_json.py or deprecated.json not found; skipping prune."
-          fi
+          cd /tmp/template-source
+          git checkout -f "$OLD_SHA"
 
-          echo "=== Replay file used: /tmp/replay.json ==="
-          cat /tmp/replay.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          
+          replay_path = Path("/tmp/replay.raw.json")
+          template_cookiecutter = Path("/tmp/template-source/cookiecutter.json")
+          
+          replay = json.loads(replay_path.read_text(encoding="utf-8"))
+          ctx = replay.get("cookiecutter", {})
+          
+          tmpl = json.loads(template_cookiecutter.read_text(encoding="utf-8"))
+          
+          SPECIAL = {"__prompts__", "_copy_without_render", "_jinja2_env_vars"}
+          
+          def choose_default(v):
+              if isinstance(v, list) and v:
+                  low = [str(x).lower() for x in v]
+                  if "yes" in low and "no" in low:
+                      return v[low.index("no")]
+                  if "development" in low:
+                      return v[low.index("development")]
+                  return v[0]
+              return v
+          
+          added = {}
+          for k, v in tmpl.items():
+              if k in SPECIAL:
+                  continue
+              if k not in ctx:
+                  ctx[k] = choose_default(v)
+                  added[k] = ctx[k]
+          
+          replay["cookiecutter"] = ctx
+          replay_path.write_text(json.dumps(replay, indent=2), encoding="utf-8")
+          
+          print("Backfilled missing keys for OLD template:")
+          for k, v in added.items():
+              print(f"  - {k}: {v!r}")
+          PY
 
-      - name: Render template at OLD_SHA
+      - name: Render template at OLD_SHA (uses backfilled raw replay)
         id: render_old
         shell: bash
         env:
@@ -194,22 +220,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          OLD_SHA="${{ needs.check-update.outputs.old_sha }}"
-          REPLAY_FILE="/tmp/replay.json"
+          REPLAY_FILE="/tmp/replay.raw.json"
 
           rm -rf ~/.cookiecutters/* || true
           rm -rf /tmp/rendered_old || true
           mkdir -p /tmp/rendered_old
 
-          cd /tmp/template-source
-          git checkout -f "$OLD_SHA"
-
           cookiecutter /tmp/template-source \
             --replay \
             --replay-file "$REPLAY_FILE" \
             --overwrite-if-exists \
-            --output-dir /tmp/rendered_old \
-            --verbose
+            --output-dir /tmp/rendered_old
 
           PROJECT_ROOT="$(find /tmp/rendered_old -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
           if [ -z "$PROJECT_ROOT" ]; then
@@ -220,7 +241,31 @@ jobs:
 
           echo "project_root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
 
-      - name: Render template at NEW_SHA
+      - name: Checkout NEW_SHA and prune replay for NEW template
+        shell: bash
+        run: |
+          set -euo pipefail
+          NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
+
+          cd /tmp/template-source
+          git checkout -f "$NEW_SHA"
+
+          # Reset pruned replay from raw each time
+          cp /tmp/replay.raw.json /tmp/replay.pruned.json
+
+          if [ -f "/tmp/template-source/hooks/prune_cookiecutter_json.py" ] && [ -f "/tmp/template-source/hooks/deprecated.json" ]; then
+            echo "🧹 Pruning deprecated variables (based on NEW template)"
+            python /tmp/template-source/hooks/prune_cookiecutter_json.py \
+              --cookie /tmp/replay.pruned.json \
+              --deprecations /tmp/template-source/hooks/deprecated.json
+          else
+            echo "ℹ️ prune_cookiecutter_json.py or deprecated.json not found at NEW_SHA; skipping prune."
+          fi
+
+          echo "=== Pruned replay file used: /tmp/replay.pruned.json ==="
+          cat /tmp/replay.pruned.json
+
+      - name: Render template at NEW_SHA (uses pruned replay)
         id: render_new
         shell: bash
         env:
@@ -231,22 +276,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
-          REPLAY_FILE="/tmp/replay.json"
+          REPLAY_FILE="/tmp/replay.pruned.json"
 
           rm -rf ~/.cookiecutters/* || true
           rm -rf /tmp/rendered_new || true
           mkdir -p /tmp/rendered_new
 
-          cd /tmp/template-source
-          git checkout -f "$NEW_SHA"
-
           cookiecutter /tmp/template-source \
             --replay \
             --replay-file "$REPLAY_FILE" \
             --overwrite-if-exists \
-            --output-dir /tmp/rendered_new \
-            --verbose
+            --output-dir /tmp/rendered_new
 
           PROJECT_ROOT="$(find /tmp/rendered_new -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
           if [ -z "$PROJECT_ROOT" ]; then
@@ -274,48 +314,40 @@ jobs:
           echo "OLD_ROOT=$OLD_ROOT"
           echo "NEW_ROOT=$NEW_ROOT"
 
-          # Excludes depending on update_workflows
           RSYNC_EXCLUDES=(--exclude ".git/")
-          DELETE_EXCLUDES=()
 
           if [ "${{ steps.auth.outputs.enabled }}" != "true" ]; then
             RSYNC_EXCLUDES+=(--exclude ".github/workflows/")
-            DELETE_EXCLUDES+=(".github/workflows/*")
           fi
 
-          # 1) Copy only files that changed between OLD and NEW renders
-          # --compare-dest makes rsync skip files identical to OLD_ROOT
           rsync -a --checksum \
             "${RSYNC_EXCLUDES[@]}" \
             --compare-dest="$OLD_ROOT/" \
             "$NEW_ROOT/" \
             "$GITHUB_WORKSPACE/"
 
-          # 2) Delete files that existed in OLD render but are gone in NEW render
-          # (only deletes files that currently exist in the repo)
           cd "$OLD_ROOT"
           while IFS= read -r rel; do
             [ -z "$rel" ] && continue
+            rel="${rel#./}"
 
-            # skip excluded paths
             if [ "${{ steps.auth.outputs.enabled }}" != "true" ] && [[ "$rel" == .github/workflows/* ]]; then
               continue
             fi
 
-            if [ ! -e "$NEW_ROOT/$rel" ]; then
-              if [ -e "$GITHUB_WORKSPACE/$rel" ]; then
-                echo "Deleting removed-by-template: $rel"
-                rm -f "$GITHUB_WORKSPACE/$rel" || true
-              fi
+            if [ ! -e "$NEW_ROOT/$rel" ] && [ -e "$GITHUB_WORKSPACE/$rel" ]; then
+              echo "Deleting removed-by-template: $rel"
+              rm -f "$GITHUB_WORKSPACE/$rel" || true
             fi
-          done < <(find . -type f -print | sed 's|^\./||')
+          done < <(find . -type f -print)
 
       - name: Update .cookiecutter.json
         shell: bash
         run: |
           set -euo pipefail
 
-          cp /tmp/replay.json "$GITHUB_WORKSPACE/.cookiecutter.json"
+          # Persist pruned replay back to project and update template_sha
+          cp /tmp/replay.pruned.json "$GITHUB_WORKSPACE/.cookiecutter.json"
 
           NEW_SHA="${{ needs.check-update.outputs.new_sha }}"
           jq ".cookiecutter.template_sha = \"${NEW_SHA}\"" \
