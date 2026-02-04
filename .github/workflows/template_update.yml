@@ -340,6 +340,8 @@ jobs:
             --exclude "templates/"
             --exclude "templates/**"
             --exclude "version.json"
+            --exclude "README.md"
+            --exclude "readme.md"
           )
       
           if [ "${{ steps.auth.outputs.enabled }}" != "true" ]; then
@@ -363,7 +365,7 @@ jobs:
             fi
       
             # Never delete repo-owned files
-            if [ "$rel" = "version.json" ]; then
+            if [ "$rel" = "version.json" ] || [ "$rel" = "README.md" ] || [ "$rel" = "readme.md" ]; then
               continue
             fi
       
