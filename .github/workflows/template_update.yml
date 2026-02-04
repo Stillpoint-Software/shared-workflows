@@ -322,32 +322,6 @@ jobs:
             "$GITHUB_WORKSPACE/.cookiecutter.json" > "$GITHUB_WORKSPACE/tmp.json" \
             && mv "$GITHUB_WORKSPACE/tmp.json" "$GITHUB_WORKSPACE/.cookiecutter.json"
 
-      - name: Remove extra blank lines
-        shell: pwsh
-        run: |
-          if (-not (Test-Path "src")) {
-            Write-Host "ℹ️ No src directory; skipping."
-            exit 0
-          }
-
-          $files = @()
-          $files += Get-ChildItem -Path "src" -Recurse -Filter "*.cs" -File
-          $files += Get-ChildItem -Path "src" -Recurse -Filter "*.csproj" -File
-
-          if ($files.Count -eq 0) {
-            Write-Host "ℹ️ No .cs or .csproj files; skipping."
-            exit 0
-          }
-
-          foreach ($f in $files) {
-            $text = Get-Content -Path $f.FullName -Raw
-            $normalized = $text -replace "`r`n", "`n"
-            $collapsed = [regex]::Replace($normalized, "`n{2,}", "`n`n")
-            if ($collapsed -ne $normalized) {
-              Set-Content -Path $f.FullName -Value $collapsed -NoNewline
-            }
-          }
-
       - name: Commit changes
         id: commit
         shell: bash
