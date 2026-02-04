@@ -111,7 +111,7 @@ jobs:
 
       - name: Install dependencies
         shell: bash
-        run: pip install cookiecutter
+        run: pip install "cookiecutter==2.6.0"
 
       - name: Prepare branch name
         id: branch
@@ -174,13 +174,11 @@ jobs:
           rm -rf ~/.cookiecutters/* || true
           rm -rf /tmp/rendered || true
 
-          mkdir -p ~/.cookiecutter_replay
-          cp /tmp/template-source/.cookiecutter.json ~/.cookiecutter_replay/template-source.json
-      
           cookiecutter /tmp/template-source \
-            --replay
-            --overwrite-if-exists \
-            --output-dir /tmp/rendered
+          --replay \
+          --replay-file /tmp/template-source/.cookiecutter.json \
+          --overwrite-if-exists \
+          --output-dir /tmp/rendered
 
           DIR=$(ls /tmp/rendered | head -n 1 || true)
 
