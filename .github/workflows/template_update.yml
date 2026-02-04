@@ -165,7 +165,9 @@ jobs:
           else
             echo "ℹ️ prune_cookiecutter_json.py or deprecated.json not found; skipping prune."
           fi
-
+          
+          jq -e '.cookiecutter.include_audit | (type=="boolean")' /tmp/template-source/.cookiecutter.json > /dev/null
+          
           echo "=== After copy/prune: /tmp/template-source/.cookiecutter.json ==="
           cat /tmp/template-source/.cookiecutter.json
 
@@ -190,24 +192,7 @@ jobs:
             --replay-file /tmp/template-source/.cookiecutter.json \
             --overwrite-if-exists \
             --output-dir /tmp/rendered
-
-          DIR=$(ls /tmp/rendered | head -n 1 || true)
-          if [ -z "$DIR" ]; then
-            echo "::error ::No rendered output found"
-            exit 1
-          fi
-
-          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
-
-          DIR=$(ls /tmp/rendered | head -n 1 || true)
-
-          if [ -z "$DIR" ]; then
-            echo "::error ::No rendered output found"
-            exit 1
-          fi
-
-          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
-
+            
       - name: Create update branch
         shell: bash
         run: |
