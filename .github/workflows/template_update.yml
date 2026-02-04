@@ -178,7 +178,7 @@ jobs:
           cp /tmp/template-source/.cookiecutter.json ~/.cookiecutter_replay/template-source.json
       
           cookiecutter /tmp/template-source \
-            --replay-file /tmp/template-source/.cookiecutter.json \
+            --replay
             --overwrite-if-exists \
             --output-dir /tmp/rendered
 
