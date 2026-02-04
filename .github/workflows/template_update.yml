@@ -310,21 +310,21 @@ jobs:
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
-
-          # If .git is missing here, commit will never work—fail early with context
+      
           if [ ! -e ".git" ]; then
             echo "::error ::.git is missing in workspace before delta apply."
             pwd
             ls -la
             exit 1
           fi
-
+      
           rm -rf /tmp/workspace_git || true
           mv .git /tmp/workspace_git
-
+          trap 'cd "$GITHUB_WORKSPACE"; [ -e /tmp/workspace_git ] && mv /tmp/workspace_git .git' EXIT
+      
           OLD_ROOT="${{ steps.render_old.outputs.project_root }}"
           NEW_ROOT="${{ steps.render_new.outputs.project_root }}"
-
+      
           RSYNC_EXCLUDES=(
             --exclude ".git"
             --exclude ".git/"
@@ -332,39 +332,42 @@ jobs:
             --exclude "templates/**"
             --exclude "version.json"
           )
-
+      
           if [ "${{ steps.auth.outputs.enabled }}" != "true" ]; then
             RSYNC_EXCLUDES+=(--exclude ".github/workflows/")
           fi
-
+      
           rsync -a --checksum \
             "${RSYNC_EXCLUDES[@]}" \
             --compare-dest="$OLD_ROOT/" \
             "$NEW_ROOT/" \
             "$GITHUB_WORKSPACE/"
-
+      
           cd "$OLD_ROOT"
           while IFS= read -r rel; do
             [ -z "$rel" ] && continue
             rel="${rel#./}"
-
+      
             if [ "${{ steps.auth.outputs.enabled }}" != "true" ] && [[ "$rel" == .github/workflows/* ]]; then
               continue
             fi
-
+      
+            # Never delete repo-owned files
+            if [ "$rel" = "version.json" ]; then
+              continue
+            fi
+      
             if [ ! -e "$NEW_ROOT/$rel" ] && [ -e "$GITHUB_WORKSPACE/$rel" ]; then
               echo "Deleting removed-by-template: $rel"
               rm -f "$GITHUB_WORKSPACE/$rel" || true
             fi
           done < <(find . -type f -print)
-
+      
+          cd "$GITHUB_WORKSPACE"
+      
           # Never include template-only scaffolding
           rm -rf "$GITHUB_WORKSPACE/templates" || true
-          rm -f "$GITHUB_WORKSPACE/version.json" || true
-
-          cd "$GITHUB_WORKSPACE"
-          mv /tmp/workspace_git .git
-
+      
           git rev-parse --is-inside-work-tree
 
       - name: Update .cookiecutter.json
