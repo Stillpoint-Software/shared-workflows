@@ -325,7 +325,13 @@ jobs:
           OLD_ROOT="${{ steps.render_old.outputs.project_root }}"
           NEW_ROOT="${{ steps.render_new.outputs.project_root }}"
 
-          RSYNC_EXCLUDES=(--exclude ".git" --exclude ".git/")
+          RSYNC_EXCLUDES=(
+            --exclude ".git"
+            --exclude ".git/"
+            --exclude "templates/"
+            --exclude "templates/**"
+            --exclude "version.json"
+          )
 
           if [ "${{ steps.auth.outputs.enabled }}" != "true" ]; then
             RSYNC_EXCLUDES+=(--exclude ".github/workflows/")
@@ -351,6 +357,10 @@ jobs:
               rm -f "$GITHUB_WORKSPACE/$rel" || true
             fi
           done < <(find . -type f -print)
+
+          # Never include template-only scaffolding
+          rm -rf "$GITHUB_WORKSPACE/templates" || true
+          rm -f "$GITHUB_WORKSPACE/version.json" || true
 
           cd "$GITHUB_WORKSPACE"
           mv /tmp/workspace_git .git
