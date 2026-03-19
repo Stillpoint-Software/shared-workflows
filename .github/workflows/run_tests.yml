@@ -69,7 +69,6 @@ jobs:
           for proj in "${projects[@]}"; do
             echo "Running tests for: $proj"
             dotnet test "$proj" \
-              --no-build \
               -c ${{ steps.config.outputs.configuration }} \
               -f ${{ matrix.framework }} \
               --logger "trx;LogFileName=$(basename "$proj" .csproj)-${{ matrix.framework }}.trx" \
