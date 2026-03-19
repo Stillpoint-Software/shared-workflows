@@ -34,7 +34,7 @@ jobs:
 
     steps:
       - name: Checkout project repo (cookiecutter metadata only)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ github.repository }}
           ref: ${{ inputs.repo_branch }}

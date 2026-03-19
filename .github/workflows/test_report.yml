@@ -27,21 +27,21 @@ jobs:
     steps:
       - name: Checkout @ tested commit (preferred)
         if: ${{ inputs.sha != '' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.sha }}
           fetch-depth: 0
 
       - name: Checkout @ tested branch (fallback)
         if: ${{ inputs.sha == '' && inputs.branch != '' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 0
 
       - name: Checkout @ caller ref (last resort)
         if: ${{ inputs.sha == '' && inputs.branch == '' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
