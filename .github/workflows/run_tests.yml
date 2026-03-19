@@ -20,7 +20,7 @@ jobs:
         framework: [net8.0, net9.0, net10.0]
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 0
@@ -80,7 +80,7 @@ jobs:
           ls -la ./TestResults/
 
       - name: Upload Test Results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: test-results-${{ matrix.framework }}
@@ -93,20 +93,20 @@ jobs:
     if: always()
     steps:
       - name: Download All Test Results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: test-results-*
           path: ./TestResults
           merge-multiple: true
 
       - name: Upload Combined Results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: test-results
           path: ./TestResults/
           if-no-files-found: warn
 
       - name: Cleanup Individual Artifacts
-        uses: geekyeggo/delete-artifact@v5
+        uses: geekyeggo/delete-artifact@v6
         with:
           name: test-results-*

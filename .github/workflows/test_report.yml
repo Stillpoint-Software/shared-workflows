@@ -46,7 +46,7 @@ jobs:
           fetch-depth: 0
 
       - name: ⬇️ Download artifacts from Test run
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           repository:   ${{ github.repository }}
           run-id:       ${{ inputs.test_run_id }}

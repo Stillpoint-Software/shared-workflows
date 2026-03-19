@@ -64,7 +64,7 @@ jobs:
       tag:            ${{ steps.final.outputs.tag }}
     steps:
       - name: Checkout branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.target_branch }}
           fetch-depth: 0

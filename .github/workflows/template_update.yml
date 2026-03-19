@@ -96,7 +96,7 @@ jobs:
           fi
 
       - name: Checkout project repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ github.repository }}
           ref: ${{ inputs.repo_branch }}
@@ -105,7 +105,7 @@ jobs:
           token: ${{ steps.auth.outputs.token }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.x"
 
