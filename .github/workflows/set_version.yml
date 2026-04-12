@@ -63,11 +63,24 @@ jobs:
       new_nuget:      ${{ steps.final.outputs.nuget }}
       tag:            ${{ steps.final.outputs.tag }}
     steps:
+      # Mint a short-lived token from the Stillpoint Release Bot GitHub App.
+      # The app has contents:write and can bypass branch protection (added
+      # to bypass_pull_request_allowances.apps on each repo's main branch),
+      # so the version.json push below can land on a protected branch
+      # without loosening protection for other workflows like Dependabot.
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - name: Checkout branch
         uses: actions/checkout@v6
         with:
           ref: ${{ inputs.target_branch }}
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Install nbgv
         run: dotnet tool install -g nbgv --version 3.9.50
