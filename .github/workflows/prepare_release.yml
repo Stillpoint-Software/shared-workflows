@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       target_branch:
-        description: 'Branch to release from (e.g., main, develop, hotfix/xyz, v1.2)'
+        description: 'Branch to release from (e.g., main, hotfix/xyz, v1.2)'
         type: string
         required: true
       tag:

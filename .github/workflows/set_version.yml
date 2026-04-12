@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       target_branch:
-        description: 'Branch to update (e.g., develop, main, hotfix/foo, v1.2)'
+        description: 'Branch to update (e.g., main, hotfix/foo, v1.2, feature/foo)'
         type: string
         required: true
       mode:
@@ -12,7 +12,7 @@ on:
           How to set the version:
           - explicit: set to a specific value (e.g., 1.3-alpha)
           - bump: bump major/minor/patch from current SimpleVersion and apply optional prerelease
-          - auto: policy-based (develop -> next minor -alpha; hotfix/* -> next patch -alpha; main/vX.Y -> stable)
+          - auto: policy-based (main/vX.Y -> stable; hotfix/* -> next patch -alpha; feature branches -> next minor -alpha)
         type: string
         required: true
         default: auto
@@ -112,15 +112,13 @@ jobs:
               ;;
             auto)
               parse_semver "$SIMPLE"
-              if [[ "$BR" == "develop" ]]; then
-                [[ -z "$PRE" ]] && MINOR=$((MINOR+1))
-                NEW="${MAJOR}.${MINOR}-alpha"
+              if [[ "$BR" == "main" || "$BR" =~ ^v[0-9]+\.[0-9]+$ ]]; then
+                NEW="${MAJOR}.${MINOR}.${PATCH}"
               elif [[ "$BR" =~ ^hotfix/ ]]; then
                 [[ -z "$PRE" ]] && PATCH=$((PATCH+1))
                 NEW="${MAJOR}.${MINOR}.${PATCH}-alpha"
-              elif [[ "$BR" == "main" || "$BR" =~ ^v[0-9]+\.[0-9]+$ ]]; then
-                NEW="${MAJOR}.${MINOR}.${PATCH}"
               else
+                # Feature branches (e.g., feature/*, bugfix/*, ad hoc): next minor -alpha
                 if [[ -z "$PRE" ]]; then
                   MINOR=$((MINOR+1)); NEW="${MAJOR}.${MINOR}-alpha"
                 else
@@ -203,11 +201,11 @@ jobs:
                 useH=1
               fi
 
-              if [[ "$BR" == "develop" ]]; then
+              if [[ "$BR" == "main" || "$BR" =~ ^v[0-9]+\.[0-9]+$ ]]; then
                 if [[ $useH -eq 1 ]]; then
-                  NEW="${hM}.$((hN+1))-alpha"
+                  NEW="${hM}.${hN}.$((hP+1))"
                 else
-                  NEW="${cM}.$((cN+1))-alpha"
+                  NEW="${cM}.${cN}.$((cP+1))"
                 fi
               elif [[ "$BR" =~ ^hotfix/ ]]; then
                 if [[ $useH -eq 1 ]]; then
@@ -215,11 +213,11 @@ jobs:
                 else
                   NEW="${cM}.${cN}.$((cP+1))-alpha"
                 fi
-              else # main or vX.Y
+              else # feature branches
                 if [[ $useH -eq 1 ]]; then
-                  NEW="${hM}.${hN}.$((hP+1))"
+                  NEW="${hM}.$((hN+1))-alpha"
                 else
-                  NEW="${cM}.${cN}.$((cP+1))"
+                  NEW="${cM}.$((cN+1))-alpha"
                 fi
               fi
 

@@ -3,10 +3,20 @@
 This repository contains reusable **GitHub Actions workflows** for .NET projects.  
 Update once here → use everywhere.
 
-**NOTE:** If the **Main** repo has restrictions that a pull request is required to 
-update branch, then the **Create Release** workflow will fail.  
+## 🌱 Trunk-Based Workflow
 
-You will need to use the **Create Release** workflow on the *develop* branch and then create a pull request to main.
+Repositories using these workflows follow a **trunk-based** model:
+
+1. Feature branches PR into `main` (squash-merge).
+2. Run the **Create Release** workflow on `main` to bump the version and create a draft release.
+3. Publish the draft release, which triggers **Pack and Publish** to NuGet.
+
+Supported branch types for `auto` versioning:
+- `main` / `vX.Y` → stable (no prerelease suffix)
+- `hotfix/*` → next patch `-alpha`
+- feature branches → next minor `-alpha`
+
+**NOTE:** If the `main` branch has restrictions that require a pull request to update the branch, the **Create Release** workflow will fail because it pushes `version.json`. Either allow workflow pushes to `main`, or change `create_release.yml` to open a PR instead.
 
 ---
 
@@ -43,7 +53,7 @@ on:
           How to set the version:
           - explicit: set to a specific value (e.g., 1.3-alpha)
           - bump: bump major/minor/patch from current SimpleVersion and apply optional prerelease
-          - auto: policy-based (develop->next minor -alpha; hotfix/*->next patch -alpha; main/vX.Y->stable)
+          - auto: policy-based (main/vX.Y->stable; hotfix/*->next patch -alpha; feature branches->next minor -alpha)
         type: choice
         options: [auto, bump, explicit]
         default: auto
@@ -122,7 +132,7 @@ on:
   workflow_run:
     workflows: ["Run Tests"]
     types:     [completed]
-    branches:  [main, develop]
+    branches:  [main]
 
 permissions:
   contents: read
@@ -171,7 +181,7 @@ on:
   workflow_dispatch:
   pull_request:
     types: [opened, edited, synchronize, reopened]
-    branches: [main, develop]
+    branches: [main]
 
   workflow_run:
     workflows: [Create Prerelease, Create Release]
@@ -322,11 +332,11 @@ on:
   workflow_run:
     workflows: [Create Release]
     types: [requested]
-    branches: [main, develop]        
+    branches: [main]        
   workflow_dispatch:
   pull_request:
     types: [opened, edited, synchronize, reopened]
-    branches: [main, develop]
+    branches: [main]
 
 permissions:
   contents: read
@@ -481,10 +491,10 @@ jobs:
 ---
 
 ## 🚀 Quick Tips
-- The branches MUST be main, develop, hotfix/*, and release/vX.Y for versioning to work correctly.
+- Supported branches for versioning: `main`, `hotfix/*`, `vX.Y` (release branches), and feature branches.
 - Use `${{ secrets.GITHUB_TOKEN }}` as **GH_TOKEN** in consumers.
 - `create_release.yml` **pushes** `version.json`. Ensure branch protections allow workflow pushes (or switch it to open a PR).
 - Tag is always `v<NuGetPackageVersion>`. Releases are created as **draft** by default.
-- For prereleases (develop/hotfix),  **Nerdbank.GitVersioning** baseline is `-alpha`; `main` is **always stable**.
+- For prereleases (feature branches, hotfix/*), **Nerdbank.GitVersioning** baseline is `-alpha`; `main` is **always stable**.
 - NuGet push uses `--skip-duplicate` to keep reruns green.
 - The test will run for 8,9,10.
