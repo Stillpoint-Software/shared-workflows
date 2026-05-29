@@ -31,7 +31,7 @@ jobs:
 
       - name: Nerdbank.GitVersioning (outputs)
         id: nbgv
-        uses: dotnet/nbgv@v0.4.2
+        uses: dotnet/nbgv@v0.5.2
         with:
           toolVersion: 3.9.50
 
