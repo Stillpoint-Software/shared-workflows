@@ -83,7 +83,9 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Install nbgv
-        run: dotnet tool install -g nbgv --version 3.9.50
+        run: |
+          dotnet tool install nbgv --version 3.9.50 --tool-path "$HOME/.nbgv-tool"
+          echo "$HOME/.nbgv-tool" >> "$GITHUB_PATH"
 
       - name: Read current version
         id: cur
