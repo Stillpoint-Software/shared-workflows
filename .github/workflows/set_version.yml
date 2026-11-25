@@ -35,6 +35,16 @@ on:
         type: string
         required: false
         default: "chore(nbgv): set version via CI"
+      nbgv_version:
+        description: >-
+          Nerdbank.GitVersioning tool version used to compute the version.
+          Must match the Nerdbank.GitVersioning PackageVersion in the calling
+          repo: if the tool and the package disagree, the version this
+          workflow computes can differ from the one the build stamps.
+          Defaults to the version this repo has always used.
+        type: string
+        required: false
+        default: '3.9.50'
 
     outputs:
       new_simple:
@@ -84,7 +94,7 @@ jobs:
 
       - name: Install nbgv
         run: |
-          dotnet tool install nbgv --version 3.9.50 --tool-path "$HOME/.nbgv-tool"
+          dotnet tool install nbgv --version "${{ inputs.nbgv_version }}" --tool-path "$HOME/.nbgv-tool"
           echo "$HOME/.nbgv-tool" >> "$GITHUB_PATH"
 
       - name: Read current version

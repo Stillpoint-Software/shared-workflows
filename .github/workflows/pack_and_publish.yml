@@ -17,6 +17,16 @@ on:
         required: false
         type: string
         default: '10.0.x'
+      nbgv_version:
+        description: >-
+          Nerdbank.GitVersioning tool version used to compute the version.
+          Must match the Nerdbank.GitVersioning PackageVersion in the calling
+          repo: if the tool and the package disagree, the version this
+          workflow computes can differ from the one the build stamps.
+          Defaults to the version this repo has always used.
+        required: false
+        type: string
+        default: '3.9.50'
     secrets:
       NUGET_API_KEY:
         required: true
@@ -41,7 +51,7 @@ jobs:
         id: nbgv
         uses: dotnet/nbgv@v0.5.2
         with:
-          toolVersion: 3.9.50
+          toolVersion: ${{ inputs.nbgv_version }}
 
       - name: Validate SOLUTION_NAME
         id: sln
