@@ -8,13 +8,21 @@ on:
         required: true
         type: string
         default: 'Release'
+      dotnet_version:
+        description: >-
+          SDK version(s) to install for pack and publish, passed straight to
+          actions/setup-dotnet. Defaults to the version this repo has always
+          used. Use a multi-line string to install more than one.
+          Example for a net11.0 project: '11.0.x'
+        required: false
+        type: string
+        default: '10.0.x'
     secrets:
       NUGET_API_KEY:
         required: true
 
 env:
   SOLUTION_NAME: ${{ vars.SOLUTION_NAME }}
-  DOTNET_VERSION: '10.0.x'
   NUGET_SOURCE: 'https://api.nuget.org/v3/index.json'
 
 jobs:
@@ -27,7 +35,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-version: ${{ inputs.dotnet_version }}
 
       - name: Nerdbank.GitVersioning (outputs)
         id: nbgv

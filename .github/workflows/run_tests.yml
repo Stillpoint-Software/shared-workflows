@@ -10,6 +10,14 @@ on:
         description: "Solution file to build and test"
         required: true
         type: string
+      frameworks:
+        description: >-
+          JSON array of target frameworks to test, as a string.
+          Defaults to the frameworks this repo has always tested.
+          Example for a net11.0 project: '["net11.0", "net10.0"]'
+        required: false
+        type: string
+        default: '["net8.0", "net9.0", "net10.0"]'
 
 jobs:
   test:
@@ -17,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        framework: [net8.0, net9.0, net10.0]
+        framework: ${{ fromJSON(inputs.frameworks) }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v6
@@ -29,6 +37,7 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: |
+            11.0.x
             10.0.x
             9.0.x
             8.0.x
