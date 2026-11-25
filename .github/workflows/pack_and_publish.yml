@@ -8,13 +8,31 @@ on:
         required: true
         type: string
         default: 'Release'
+      dotnet_version:
+        description: >-
+          SDK version(s) to install for pack and publish, passed straight to
+          actions/setup-dotnet. Defaults to the version this repo has always
+          used. Use a multi-line string to install more than one.
+          Example for a net11.0 project: '11.0.x'
+        required: false
+        type: string
+        default: '10.0.x'
+      nbgv_version:
+        description: >-
+          Nerdbank.GitVersioning tool version used to compute the version.
+          Must match the Nerdbank.GitVersioning PackageVersion in the calling
+          repo: if the tool and the package disagree, the version this
+          workflow computes can differ from the one the build stamps.
+          Defaults to the version every Hyperbee repo is synced to.
+        required: false
+        type: string
+        default: '3.10.94'
     secrets:
       NUGET_API_KEY:
         required: true
 
 env:
   SOLUTION_NAME: ${{ vars.SOLUTION_NAME }}
-  DOTNET_VERSION: '10.0.x'
   NUGET_SOURCE: 'https://api.nuget.org/v3/index.json'
 
 jobs:
@@ -27,13 +45,13 @@ jobs:
 
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-version: ${{ inputs.dotnet_version }}
 
       - name: Nerdbank.GitVersioning (outputs)
         id: nbgv
         uses: dotnet/nbgv@v0.5.2
         with:
-          toolVersion: 3.9.50
+          toolVersion: ${{ inputs.nbgv_version }}
 
       - name: Validate SOLUTION_NAME
         id: sln

@@ -7,6 +7,14 @@ on:
         description: "Branch to use for the workflow"
         type: string
         required: true
+      dotnet_version:
+        description: >-
+          SDK version(s) to install for dotnet format, passed straight to
+          actions/setup-dotnet. Defaults to the version this repo has always
+          used. Example for a net11.0 project: '11.0.x'
+        required: false
+        type: string
+        default: "10.0.x"
 jobs:
   format:
     runs-on: ubuntu-latest
@@ -21,7 +29,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: ${{ inputs.dotnet_version }}
 
       - name: Format Code
         run: dotnet format
