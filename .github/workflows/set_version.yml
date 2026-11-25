@@ -41,10 +41,10 @@ on:
           Must match the Nerdbank.GitVersioning PackageVersion in the calling
           repo: if the tool and the package disagree, the version this
           workflow computes can differ from the one the build stamps.
-          Defaults to the version this repo has always used.
+          Defaults to the version every Hyperbee repo is synced to.
         type: string
         required: false
-        default: '3.9.50'
+        default: '3.10.94'
 
     outputs:
       new_simple:
