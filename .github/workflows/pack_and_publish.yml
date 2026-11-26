@@ -1,4 +1,15 @@
-name: Pack & Publish Package
+﻿name: Pack & Publish Package
+
+# Superseded for new callers by the composite action at
+# .github/actions/pack-and-publish. Prefer that one.
+#
+# This workflow still works and still publishes with a long-lived API key, but it
+# cannot use NuGet Trusted Publishing. A job running inside a reusable workflow
+# stamps THIS repository onto the OIDC token's job_workflow_ref claim, so nuget.org
+# matches the shared file rather than the calling repo. That arrangement is
+# undocumented and has open failure reports (NuGet/login#6, #9, #24) with no reports
+# of it working. The composite action runs in the caller's own job, so the token
+# carries the calling repository's identity and each repo gets its own scoped policy.
 
 on:
   workflow_call:

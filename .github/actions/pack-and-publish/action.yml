@@ -1,0 +1,230 @@
+name: Pack and Publish
+description: >-
+  Builds, packs and publishes a Hyperbee solution to NuGet, preferring Trusted
+  Publishing over a long-lived API key.
+
+# This is a composite action rather than a reusable workflow, and that is the whole
+# point of it.
+#
+# NuGet Trusted Publishing exchanges a GitHub OIDC token for a short-lived API key,
+# and it matches the token's claims against a policy naming a repository and a
+# workflow file. When a job runs inside a reusable workflow, the `job_workflow_ref`
+# claim names the REUSABLE file, not the caller, so a policy would have to name this
+# repository and pack_and_publish.yml. That arrangement is undocumented by both the
+# NuGet docs and the NuGet/login README, and the NuGet/login issue tracker carries
+# several reports of it failing with a 401 and no reports of it working
+# (NuGet/login#6, #9, #24). The workaround reporters landed on is to run the login
+# and the push inside the calling repository's own job.
+#
+# A composite action's steps execute in the caller's job, so the OIDC token carries
+# the CALLING repository's identity. Each repo then gets its own narrowly scoped
+# policy, instead of one blanket policy that would let anything calling a shared
+# file publish any package the organization owns.
+#
+# The caller must do two things this action cannot do for itself:
+#   1. grant `id-token: write` on the job, because a token cannot be minted without
+#      it, and permissions can only be reduced down a call chain, never raised;
+#   2. check out the repository with `fetch-depth: 0`, because nbgv needs history to
+#      compute a version.
+
+inputs:
+  solution_name:
+    description: >-
+      Solution file, relative to the repository root. Pass the SOLUTION_NAME repo
+      variable.
+    required: true
+
+  build_configuration:
+    description: Build configuration passed to build and pack.
+    required: false
+    default: Release
+
+  dotnet_version:
+    description: >-
+      SDK version(s) for actions/setup-dotnet. Use a multi-line string to install
+      more than one, newest first. A net11.0 target needs the 11.0 SDK.
+    required: false
+    default: '10.0.x'
+
+  nbgv_version:
+    description: >-
+      Nerdbank.GitVersioning tool version used to compute the version. Must match the
+      Nerdbank.GitVersioning PackageVersion in the calling repo: if the tool and the
+      package disagree, the version computed here can differ from the one the build
+      stamps.
+    required: false
+    default: '3.10.94'
+
+  nuget_user:
+    description: >-
+      NuGet.org account name owning the Trusted Publishing policy, for example
+      'contoso-bot'. Not an email address. When this is set the action mints a
+      short-lived key from a GitHub OIDC token and no long-lived secret is involved.
+      Leave it empty to publish with nuget_api_key instead.
+    required: false
+    default: ''
+
+  nuget_api_key:
+    description: >-
+      Long-lived NuGet API key. The fallback for repos with no Trusted Publishing
+      policy yet, and ignored when nuget_user is set. One of this and nuget_user has
+      to be present.
+    required: false
+    default: ''
+
+  nuget_source:
+    description: NuGet push source.
+    required: false
+    default: 'https://api.nuget.org/v3/index.json'
+
+  artifacts_path:
+    description: Directory the packages are written to and pushed from.
+    required: false
+    default: artifacts
+
+outputs:
+  package_version:
+    description: The NuGet package version that was packed and pushed.
+    value: ${{ steps.nbgv.outputs.NuGetPackageVersion }}
+
+  publish_mode:
+    description: Either 'trusted-publishing' or 'api-key', whichever was used.
+    value: ${{ steps.mode.outputs.mode }}
+
+runs:
+  using: composite
+
+  steps:
+    - name: Setup .NET SDKs
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: ${{ inputs.dotnet_version }}
+
+    - name: Nerdbank.GitVersioning (outputs)
+      id: nbgv
+      uses: dotnet/nbgv@v0.5.2
+      with:
+        toolVersion: ${{ inputs.nbgv_version }}
+
+    - name: Validate solution
+      id: sln
+      shell: bash
+      env:
+        SOLUTION_NAME: ${{ inputs.solution_name }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "${SOLUTION_NAME}" ]]; then
+          echo "::error::solution_name is empty. Pass the SOLUTION_NAME repo variable."
+          exit 1
+        fi
+
+        if [[ ! -f "${SOLUTION_NAME}" ]]; then
+          echo "::error::solution_name '${SOLUTION_NAME}' does not exist at the repository root."
+          echo "Contents of repository root:"
+          ls -la
+          exit 1
+        fi
+
+        echo "sln=${SOLUTION_NAME}" >> "$GITHUB_OUTPUT"
+        echo "Using solution: ${SOLUTION_NAME}"
+
+    # Decided before the build so a misconfigured repo fails in seconds rather than
+    # after a full build and pack.
+    - name: Decide publish mode
+      id: mode
+      shell: bash
+      env:
+        NUGET_USER: ${{ inputs.nuget_user }}
+        NUGET_API_KEY: ${{ inputs.nuget_api_key }}
+      run: |
+        set -euo pipefail
+
+        if [[ -n "${NUGET_USER}" ]]; then
+          echo "mode=trusted-publishing" >> "$GITHUB_OUTPUT"
+          echo "Publishing with Trusted Publishing as NuGet account '${NUGET_USER}'."
+          echo "A policy on nuget.org must name this repository and this repository's"
+          echo "calling workflow file, or the token exchange will fail with a 401."
+        elif [[ -n "${NUGET_API_KEY}" ]]; then
+          echo "mode=api-key" >> "$GITHUB_OUTPUT"
+          echo "::warning::Publishing with a long-lived API key. Set the NUGET_USER secret"
+          echo "and add a Trusted Publishing policy on nuget.org to retire it."
+        else
+          echo "::error::Neither nuget_user nor nuget_api_key was supplied, so there is no"
+          echo "way to authenticate to NuGet. Set the NUGET_USER secret for Trusted"
+          echo "Publishing, or pass NUGET_API_KEY."
+          exit 1
+        fi
+
+    - name: Restore
+      shell: bash
+      run: dotnet restore "${{ steps.sln.outputs.sln }}"
+
+    - name: Build
+      shell: bash
+      run: |
+        dotnet build --no-restore \
+          -c "${{ inputs.build_configuration }}" \
+          "${{ steps.sln.outputs.sln }}"
+
+    # nbgv stamps a prerelease-shaped version on any branch that is not a public
+    # release ref, and PublicRelease=true is what strips the commit-hash suffix. It is
+    # applied only when nbgv itself reports no prerelease, so a genuine alpha or rc
+    # keeps its suffix.
+    - name: Decide PublicRelease (stable only)
+      id: rel
+      shell: bash
+      env:
+        PRE: ${{ steps.nbgv.outputs.PrereleaseVersion }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "${PRE}" ]]; then
+          echo "flag=-p:PublicRelease=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "flag=" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Pack
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        mkdir -p "${{ inputs.artifacts_path }}"
+
+        dotnet pack --no-build \
+          -c "${{ inputs.build_configuration }}" \
+          "${{ steps.sln.outputs.sln }}" \
+          -o "${{ inputs.artifacts_path }}" \
+          -p:PackageVersion="${{ steps.nbgv.outputs.NuGetPackageVersion }}" \
+          -p:PackageReleaseNotes="https://github.com/${{ github.repository }}/releases/latest" \
+          -p:RepositoryUrl="https://github.com/${{ github.repository }}" \
+          -p:PackageProjectUrl="https://github.com/${{ github.repository }}" \
+          ${{ steps.rel.outputs.flag }}
+
+    # Deliberately after the pack. The minted key lasts one hour and each OIDC token
+    # buys exactly one key, so it is requested as late as possible.
+    - name: NuGet login (Trusted Publishing)
+      id: login
+      if: steps.mode.outputs.mode == 'trusted-publishing'
+      uses: NuGet/login@v1
+      with:
+        user: ${{ inputs.nuget_user }}
+
+    - name: Push to NuGet (Trusted Publishing)
+      if: steps.mode.outputs.mode == 'trusted-publishing'
+      shell: bash
+      run: |
+        dotnet nuget push "${{ inputs.artifacts_path }}/*.nupkg" \
+          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
+          --source "${{ inputs.nuget_source }}" \
+          --skip-duplicate
+
+    - name: Push to NuGet (API key)
+      if: steps.mode.outputs.mode == 'api-key'
+      shell: bash
+      run: |
+        dotnet nuget push "${{ inputs.artifacts_path }}/*.nupkg" \
+          --api-key "${{ inputs.nuget_api_key }}" \
+          --source "${{ inputs.nuget_source }}" \
+          --skip-duplicate
